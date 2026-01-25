@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxext6 \
     libxrender-dev \
     libxcb1 \
+    libgomp1 \
     && mkdir -p /usr/share/tesseract-ocr/tessdata \
     && curl -L -o /usr/share/tesseract-ocr/tessdata/frak.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/frak.traineddata \
     && rm -rf /var/lib/apt/lists/*

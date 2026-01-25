@@ -25,24 +25,25 @@ COLLECTION_NAME = "totenbilder"
 models = {}
 qdrant = None
 
+import asyncio
+
 # --- LIFESPAN (Startup & Shutdown Logik) ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+
+async def initialize_app():
     """
-    Wird beim Start des Servers ausgeführt.
-    Lädt das schwere KI-Modell nur einmal in den RAM und verbindet zur DB.
+    Diese Funktion läuft im Hintergrund, damit der Server sofort startet.
     """
     global qdrant
     
     # 1. Verbindung zu Qdrant
     try:
-        print(f"Versuche Verbindung zu Qdrant unter: {QDRANT_URL}")
-        # Wir setzen einen expliziten Timeout von 60 Sekunden
+        print(f"HINTERGRUND: Versuche Verbindung zu Qdrant unter: {QDRANT_URL}")
+        # Wir setzen einen expliziten Timeout von 60 Sekunden für die Client-Anfragen
         qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60)
         
         # Testen der Verbindung
         collections = qdrant.get_collections()
-        print(f"Erfolgreich mit Qdrant verbunden. Vorhandene Collections: {[c.name for c in collections.collections]}")
+        print(f"HINTERGRUND: Erfolgreich mit Qdrant verbunden. Vorhandene Collections: {[c.name for c in collections.collections]}")
 
         # Collection erstellen, falls sie noch nicht existiert
         if not qdrant.collection_exists(COLLECTION_NAME):
@@ -50,25 +51,34 @@ async def lifespan(app: FastAPI):
                 collection_name=COLLECTION_NAME,
                 vectors_config=VectorParams(size=512, distance=Distance.COSINE),
             )
-            print(f"Collection '{COLLECTION_NAME}' neu erstellt.")
+            print(f"HINTERGRUND: Collection '{COLLECTION_NAME}' neu erstellt.")
         else:
-            print(f"Collection '{COLLECTION_NAME}' gefunden.")
+            print(f"HINTERGRUND: Collection '{COLLECTION_NAME}' gefunden.")
     except Exception as e:
-        print(f"FEHLER BEI QDRANT-VERBINDUNG: {str(e)}")
-        qdrant = None # Sicherstellen, dass es None bleibt bei Fehler
+        print(f"HINTERGRUND-FEHLER BEI QDRANT: {str(e)}")
+        qdrant = None
 
     # 2. KI-Modell laden (CLIP Multilingual)
     try:
-        print("Lade KI-Modell (CLIP)... Bitte warten...")
-        # Das Modell wird von HuggingFace geladen, falls nicht lokal vorhanden
-        models["clip"] = SentenceTransformer('clip-ViT-B-32-multilingual-v1')
-        print("KI-Modell erfolgreich geladen!")
+        print("HINTERGRUND: Lade KI-Modell (CLIP)... Dies kann einige Minuten dauern...")
+        # Lade in einem Thread, um den Eventpool nicht zu blockieren
+        loop = asyncio.get_event_loop()
+        models["clip"] = await loop.run_in_executor(None, lambda: SentenceTransformer('clip-ViT-B-32-multilingual-v1'))
+        print("HINTERGRUND: KI-Modell erfolgreich geladen!")
     except Exception as e:
-        print(f"FEHLER BEIM LADEN DES KI-MODELLS: {str(e)}")
+        print(f"HINTERGRUND-FEHLER BEIM KI-MODELL: {str(e)}")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Wird beim Start des Servers ausgeführt.
+    Startet die Initialisierung im Hintergrund.
+    """
+    # Startet die Initialisierung, ohne den Boot-Vorgang zu blockieren
+    asyncio.create_task(initialize_app())
     
+    print("API-Server wird gestartet... (KI-Initialisierung läuft im Hintergrund)")
     yield
-    
-    # Code hier würde beim Herunterfahren laufen
     print("Server wird beendet.")
 
 # App Initialisierung
