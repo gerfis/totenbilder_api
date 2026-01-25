@@ -246,6 +246,7 @@ async def search_images(query: str, limit: int = 5):
         search_vector = models["text"].encode(query).tolist()
         
         # Ähnliche Vektoren in Qdrant finden
+        print(f"DEBUG: Qdrant Client Methods: {[m for m in dir(qdrant) if not m.startswith('_')]}")
         results = qdrant.search(
             collection_name=COLLECTION_NAME,
             query_vector=search_vector,
@@ -253,6 +254,10 @@ async def search_images(query: str, limit: int = 5):
         )
         
         return {"results": results}
+    except AttributeError as ae:
+        print(f"ATTRIBUTE ERROR: {ae}")
+        print(f"DEBUG: Qdrant Client Attributes: {dir(qdrant)}")
+        raise HTTPException(status_code=500, detail=f"Server Konfigurationsfehler: {str(ae)}")
     except HTTPException as he:
         raise he
     except Exception as e:
