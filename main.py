@@ -178,7 +178,9 @@ async def process_totenbild(file: UploadFile = File(...), mysql_id: int = 0):
         pil_img = Image.open(io.BytesIO(file_bytes))
         
         # Vektor erstellen (Liste von gleitkommazahlen)
-        embedding = models["clip"].encode(pil_img).tolist()
+        # Wir übergeben das Bild als Liste [pil_img], um Ambiguitäten zu vermeiden
+        embeddings = models["clip"].encode([pil_img])
+        embedding = embeddings[0].tolist()
         
         # --- C. Speichern in Qdrant ---
         payload = {
