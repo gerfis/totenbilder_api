@@ -1,5 +1,5 @@
 # Basis-Image (z.B. Python)
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 # 1. System-Pakete installieren
 # tesseract-ocr: Die Engine
@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-deu \
     tesseract-ocr-frak \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
