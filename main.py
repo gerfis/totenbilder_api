@@ -142,13 +142,11 @@ def preprocess_image_for_ocr(image_bytes):
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
-    # Graustufen
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # User Request: Keine Vorverarbeitung (kein Grayscale, kein Binarisieren),
+    # da dies bei Text auf Hintergrund kontraproduktiv war.
+    # Wir geben das Bild direkt an Tesseract weiter.
     
-    # Thresholding: Macht Hintergründe weiß und Schrift schwarz (entfernt Gilb)
-    processed_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-    
-    return processed_img
+    return img
 
 # --- API ENDPOINTS ---
 
