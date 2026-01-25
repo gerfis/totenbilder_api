@@ -15,7 +15,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, VectorParams, Distance
 
 # --- KONFIGURATION ---
-QDRANT_URL = os.getenv("QDRANT_URL", "https://qdrant.happyhati.com")
+QDRANT_URL = os.getenv("QDRANT_URL", "https://qdrant.happyhati.com:443")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "9E6B2gnZefnd3m5lGCzLkDIJ2PHNs8WG")
 COLLECTION_NAME = "totenbilder"
 
