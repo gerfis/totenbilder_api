@@ -34,12 +34,13 @@ async def lifespan(app: FastAPI):
     """
     global qdrant
     
+    # 1. Verbindung zu Qdrant
     try:
-        # 1. Verbindung zu Qdrant
         print(f"Versuche Verbindung zu Qdrant unter: {QDRANT_URL}")
-        qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+        # Wir setzen einen expliziten Timeout von 60 Sekunden
+        qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60)
         
-        # Testen der Verbindung (dies löst eine Exception aus, wenn nicht erreichbar)
+        # Testen der Verbindung
         collections = qdrant.get_collections()
         print(f"Erfolgreich mit Qdrant verbunden. Vorhandene Collections: {[c.name for c in collections.collections]}")
 
@@ -52,16 +53,18 @@ async def lifespan(app: FastAPI):
             print(f"Collection '{COLLECTION_NAME}' neu erstellt.")
         else:
             print(f"Collection '{COLLECTION_NAME}' gefunden.")
+    except Exception as e:
+        print(f"FEHLER BEI QDRANT-VERBINDUNG: {str(e)}")
+        qdrant = None # Sicherstellen, dass es None bleibt bei Fehler
 
-        # 2. KI-Modell laden (CLIP Multilingual)
+    # 2. KI-Modell laden (CLIP Multilingual)
+    try:
         print("Lade KI-Modell (CLIP)... Bitte warten...")
+        # Das Modell wird von HuggingFace geladen, falls nicht lokal vorhanden
         models["clip"] = SentenceTransformer('clip-ViT-B-32-multilingual-v1')
         print("KI-Modell erfolgreich geladen!")
-        
     except Exception as e:
-        print(f"KRITISCHER FEHLER BEIM START: {str(e)}")
-        # Wir lassen die App trotzdem starten, damit wir den Fehler über die API sehen können
-        # oder zumindest die Health-Checks bestehen.
+        print(f"FEHLER BEIM LADEN DES KI-MODELLS: {str(e)}")
     
     yield
     
