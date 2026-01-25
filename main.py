@@ -15,10 +15,8 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, VectorParams, Distance
 
 # --- KONFIGURATION ---
-# In Coolify heißt der Service oft einfach "qdrant" oder du nutzt die interne IP
-# Fallback auf localhost für lokales Testen
-QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", None)
+QDRANT_URL = os.getenv("QDRANT_URL", "https://qdrant.happyhati.com")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "9E6B2gnZefnd3m5lGCzLkDIJ2PHNs8WG")
 COLLECTION_NAME = "totenbilder"
 
 # Globale Variablen (werden beim Start befüllt)
@@ -39,30 +37,38 @@ def sync_initialize():
     # 1. Verbindung zu Qdrant
     try:
         print(f"HINTERGRUND: Versuche Verbindung zu Qdrant unter: {QDRANT_URL}")
-        qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60)
+        # Erst lokal erstellen, um zu testen bevor wir die globale Variable setzen
+        client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60)
         
         # Testen der Verbindung (blockierend)
-        collections = qdrant.get_collections()
-        print(f"HINTERGRUND: Erfolgreich mit Qdrant verbunden.")
+        collections = client.get_collections()
+        col_names = [c.name for c in collections.collections]
+        print(f"HINTERGRUND: Erfolgreich mit Qdrant verbunden. Collections: {col_names}")
 
         # Collection erstellen, falls sie noch nicht existiert
-        if not qdrant.collection_exists(COLLECTION_NAME):
-            qdrant.create_collection(
+        if not client.collection_exists(COLLECTION_NAME):
+            client.create_collection(
                 collection_name=COLLECTION_NAME,
                 vectors_config=VectorParams(size=512, distance=Distance.COSINE),
             )
             print(f"HINTERGRUND: Collection '{COLLECTION_NAME}' neu erstellt.")
+        
+        # Erst wenn alles okay ist, global setzen
+        qdrant = client
+        print(f"HINTERGRUND: Qdrant-Client ist jetzt einsatzbereit.")
+
     except Exception as e:
-        print(f"HINTERGRUND-FEHLER BEI QDRANT: {str(e)}")
+        print(f"HINTERGRUND-FEHLER BEI QDRANT: {type(e).__name__}: {str(e)}")
         qdrant = None
 
     # 2. KI-Modell laden (CLIP)
     try:
-        print("HINTERGRUND: Lade KI-Modell (CLIP)... Dies kann einige Minuten dauern...")
+        print("HINTERGRUND: Lade KI-Modell (CLIP) 'clip-ViT-B-32-multilingual-v1'...")
+        print("HINTERGRUND: Dies kann beim ersten Start (Download) mehrere Minuten dauern...")
         models["clip"] = SentenceTransformer('clip-ViT-B-32-multilingual-v1')
         print("HINTERGRUND: KI-Modell erfolgreich geladen!")
     except Exception as e:
-        print(f"HINTERGRUND-FEHLER BEIM KI-MODELL: {str(e)}")
+        print(f"HINTERGRUND-FEHLER BEIM KI-MODELL: {type(e).__name__}: {str(e)}")
 
 async def start_background_init():
     """
@@ -196,8 +202,11 @@ async def process_totenbild(file: UploadFile = File(...), mysql_id: int = 0):
             "message": "Bild wurde vektorisiert und Text extrahiert."
         }
 
+    except HTTPException as he:
+        # HTTPException direkt weitergeben
+        raise he
     except Exception as e:
-        print(f"Fehler: {str(e)}")
+        print(f"Schwerwiegender Fehler: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/search/")
@@ -223,7 +232,10 @@ async def search_images(query: str, limit: int = 5):
         )
         
         return {"results": results}
+    except HTTPException as he:
+        raise he
     except Exception as e:
+         print(f"Fehler bei Suche: {str(e)}")
          raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
