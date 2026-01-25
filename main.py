@@ -112,6 +112,10 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 async def read_index():
     return FileResponse('static/index.html')
 
+@app.get("/suche")
+async def read_search():
+    return FileResponse('static/search.html')
+
 @app.get("/health")
 async def health_check():
     """

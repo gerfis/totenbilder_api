@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Totenbilder Suche</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+            background-color: #f4f4f9;
+        }
+
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        .input-group {
+            margin-bottom: 1.5rem;
+            display: flex;
+            gap: 10px;
+        }
+
+        input[type="text"] {
+            flex-grow: 1;
+            padding: 10px;
+            font-size: 1.2rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 1rem;
+            background-color: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background-color: #2563eb;
+        }
+
+        .result-item {
+            border-bottom: 1px solid #eee;
+            padding: 1rem 0;
+        }
+
+        .result-item:last-child {
+            border-bottom: none;
+        }
+
+        .score {
+            font-weight: bold;
+            color: #2563eb;
+            font-size: 0.9rem;
+        }
+
+        .meta {
+            color: #666;
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .ocr-snippet {
+            font-family: monospace;
+            background: #f9f9f9;
+            padding: 0.5rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+        }
+
+        .nav-link {
+            display: block;
+            margin-bottom: 1rem;
+            color: #666;
+            text-decoration: none;
+        }
+
+        .nav-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+
+<body>
+
+    <a href="/" class="nav-link">← Zurück zum Upload</a>
+
+    <div class="container">
+        <h1>🔍 Totenbilder Suche</h1>
+
+        <div class="input-group">
+            <input type="text" id="search-input" placeholder="Z.B. 'Soldat in Uniform' oder 'Gedenktext'">
+            <button onclick="searchImages()">Suchen</button>
+        </div>
+
+        <div id="results">
+            <!-- Ergebnisse werden hier eingefügt -->
+        </div>
+    </div>
+
+    <script>
+        const searchInput = document.getElementById('search-input');
+        const resultsDiv = document.getElementById('results');
+
+        // Suche auch mit Enter-Taste auslösen
+        searchInput.addEventListener('keyup', (e) => {
+            if (e.key === 'Enter') searchImages();
+        });
+
+        async function searchImages() {
+            const query = searchInput.value;
+            if (!query) return;
+
+            resultsDiv.innerHTML = '<p>Suche läuft...</p>';
+
+            try {
+                const response = await fetch(`/search/?query=${encodeURIComponent(query)}&limit=10`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    displayResults(data.results);
+                } else {
+                    resultsDiv.innerHTML = `<p style="color:red">Fehler: ${data.detail || 'Serverfehler'}</p>`;
+                }
+            } catch (e) {
+                resultsDiv.innerHTML = `<p style="color:red">Verbindungsfehler: ${e.message}</p>`;
+            }
+        }
+
+        function displayResults(results) {
+            if (!results || results.length === 0) {
+                resultsDiv.innerHTML = '<p>Keine Ergebnisse gefunden.</p>';
+                return;
+            }
+
+            let html = '';
+            results.forEach(item => {
+                const score = (item.score * 100).toFixed(1) + '%';
+                const payload = item.payload || {};
+                const mysqlId = item.id;
+
+                // OCR Text kürzen falls zu lang
+                let ocrText = payload.ocr_text || '(Kein Text)';
+                if (ocrText.length > 300) ocrText = ocrText.substring(0, 300) + '...';
+
+                html += `
+                    <div class="result-item">
+                        <div class="meta">
+                            <strong>MySQL ID: ${mysqlId}</strong> | Datei: ${payload.filename || 'Unbekannt'}
+                             | Ähnlichkeit: <span class="score">${score}</span>
+                        </div>
+                        <div class="ocr-snippet">${ocrText}</div>
+                    </div>
+                `;
+            });
+
+            resultsDiv.innerHTML = html;
+        }
+    </script>
+</body>
+
+</html>
