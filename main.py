@@ -15,7 +15,12 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, VectorParams, Distance
 
 # --- KONFIGURATION ---
-QDRANT_URL = os.getenv("QDRANT_URL", "https://qdrant.happyhati.com")
+# Handle Qdrant URL robustly - force port 443 if missing for this host
+_default_qdrant_url = "https://qdrant.happyhati.com:443"
+QDRANT_URL = os.getenv("QDRANT_URL", _default_qdrant_url)
+if "qdrant.happyhati.com" in QDRANT_URL and not QDRANT_URL.endswith(":443"):
+    print(f"WARNUNG: QDRANT_URL '{QDRANT_URL}' hat keinen Port. Hänge :443 an.")
+    QDRANT_URL = f"{QDRANT_URL}:443"
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "9E6B2gnZefnd3m5lGCzLkDIJ2PHNs8WG")
 COLLECTION_NAME = "totenbilder"
 
