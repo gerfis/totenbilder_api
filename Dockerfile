@@ -31,4 +31,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Start-Befehl (z.B. deine API oder Worker)
-CMD ["python", "main.py"]
+# Port freigeben
+EXPOSE 8000
+
+# Start-Befehl: Uvicorn Server starten
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
