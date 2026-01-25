@@ -11,6 +11,11 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr-deu \
     tesseract-ocr-frak \
     libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libxcb1 \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Arbeitsverzeichnis erstellen
