@@ -17,7 +17,8 @@ from qdrant_client.models import PointStruct, VectorParams, Distance
 # --- KONFIGURATION ---
 # In Coolify heißt der Service oft einfach "qdrant" oder du nutzt die interne IP
 # Fallback auf localhost für lokales Testen
-QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333") 
+QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", None)
 COLLECTION_NAME = "totenbilder"
 
 # Globale Variablen (werden beim Start befüllt)
@@ -33,25 +34,34 @@ async def lifespan(app: FastAPI):
     """
     global qdrant
     
-    # 1. Verbindung zu Qdrant
-    print(f"Verbinde zu Qdrant unter: {QDRANT_URL}")
-    qdrant = QdrantClient(url=QDRANT_URL)
-    
-    # Collection erstellen, falls sie noch nicht existiert
-    if not qdrant.collection_exists(COLLECTION_NAME):
-        qdrant.create_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config=VectorParams(size=512, distance=Distance.COSINE),
-        )
-        print(f"Collection '{COLLECTION_NAME}' neu erstellt.")
-    else:
-        print(f"Collection '{COLLECTION_NAME}' gefunden.")
+    try:
+        # 1. Verbindung zu Qdrant
+        print(f"Versuche Verbindung zu Qdrant unter: {QDRANT_URL}")
+        qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+        
+        # Testen der Verbindung (dies löst eine Exception aus, wenn nicht erreichbar)
+        collections = qdrant.get_collections()
+        print(f"Erfolgreich mit Qdrant verbunden. Vorhandene Collections: {[c.name for c in collections.collections]}")
 
-    # 2. KI-Modell laden (CLIP Multilingual)
-    # Das dauert beim ersten Mal ein paar Sekunden/Minuten (Download)
-    print("Lade KI-Modell (CLIP)... Bitte warten...")
-    models["clip"] = SentenceTransformer('clip-ViT-B-32-multilingual-v1')
-    print("KI-Modell erfolgreich geladen!")
+        # Collection erstellen, falls sie noch nicht existiert
+        if not qdrant.collection_exists(COLLECTION_NAME):
+            qdrant.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=VectorParams(size=512, distance=Distance.COSINE),
+            )
+            print(f"Collection '{COLLECTION_NAME}' neu erstellt.")
+        else:
+            print(f"Collection '{COLLECTION_NAME}' gefunden.")
+
+        # 2. KI-Modell laden (CLIP Multilingual)
+        print("Lade KI-Modell (CLIP)... Bitte warten...")
+        models["clip"] = SentenceTransformer('clip-ViT-B-32-multilingual-v1')
+        print("KI-Modell erfolgreich geladen!")
+        
+    except Exception as e:
+        print(f"KRITISCHER FEHLER BEIM START: {str(e)}")
+        # Wir lassen die App trotzdem starten, damit wir den Fehler über die API sehen können
+        # oder zumindest die Health-Checks bestehen.
     
     yield
     
@@ -69,6 +79,18 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/")
 async def read_index():
     return FileResponse('static/index.html')
+
+@app.get("/health")
+async def health_check():
+    """
+    Einfacher Health-Check um zu sehen, ob der Server überhaupt läuft.
+    """
+    status = {
+        "status": "online",
+        "qdrant_connected": qdrant is not None,
+        "model_loaded": "clip" in models
+    }
+    return status
 
 # --- HILFSFUNKTIONEN ---
 
@@ -102,6 +124,12 @@ async def process_totenbild(file: UploadFile = File(...), mysql_id: int = 0):
     4. Speichern in Qdrant
     """
     try:
+        # --- Prüfen, ob Modell und Qdrant bereit sind ---
+        if "clip" not in models:
+            raise HTTPException(status_code=503, detail="KI-Modell wurde noch nicht geladen oder konnte nicht geladen werden. Bitte Logs prüfen.")
+        if qdrant is None:
+            raise HTTPException(status_code=503, detail="Keine Verbindung zu Qdrant möglich. Bitte Konfiguration prüfen.")
+
         # Datei einmalig in den Speicher lesen
         file_bytes = await file.read()
         
@@ -163,6 +191,12 @@ async def search_images(query: str, limit: int = 5):
     Suche nach Bildern anhand von Text (z.B. "Soldat Uniform")
     """
     try:
+        # --- Prüfen, ob Modell und Qdrant bereit sind ---
+        if "clip" not in models:
+            raise HTTPException(status_code=503, detail="KI-Modell wurde noch nicht geladen.")
+        if qdrant is None:
+            raise HTTPException(status_code=503, detail="Keine Verbindung zu Qdrant.")
+
         # Suchtext in Vektor wandeln
         search_vector = models["clip"].encode(query).tolist()
         
