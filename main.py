@@ -222,7 +222,6 @@ async def process_totenbild(file: UploadFile = File(...), mysql_id: int = 0):
         # HTTPException direkt weitergeben
         raise he
     except Exception as e:
-    except Exception as e:
         print(f"Schwerwiegender Fehler: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
