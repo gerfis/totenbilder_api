@@ -3,6 +3,7 @@ import os
 import cv2
 import numpy as np
 import pytesseract
+import traceback
 from PIL import Image
 from contextlib import asynccontextmanager
 
@@ -66,14 +67,19 @@ def sync_initialize():
         print(f"HINTERGRUND-FEHLER BEI QDRANT: {type(e).__name__}: {str(e)}")
         qdrant = None
 
-    # 2. KI-Modell laden (CLIP)
+    # 2. KI-Modelle laden
     try:
-        print("HINTERGRUND: Lade KI-Modell (CLIP) 'clip-ViT-B-32-multilingual-v1'...")
-        print("HINTERGRUND: Dies kann beim ersten Start (Download) mehrere Minuten dauern...")
-        models["clip"] = SentenceTransformer('clip-ViT-B-32-multilingual-v1')
-        print("HINTERGRUND: KI-Modell erfolgreich geladen!")
+        print("HINTERGRUND: Lade Vision-Modell (für Bilder) 'clip-ViT-B-32'...")
+        models["vision"] = SentenceTransformer('clip-ViT-B-32')
+        print("HINTERGRUND: Vision-Modell geladen.")
+
+        print("HINTERGRUND: Lade Text-Modell (für Suche) 'clip-ViT-B-32-multilingual-v1'...")
+        models["text"] = SentenceTransformer('clip-ViT-B-32-multilingual-v1')
+        print("HINTERGRUND: Text-Modell geladen.")
+        
     except Exception as e:
         print(f"HINTERGRUND-FEHLER BEIM KI-MODELL: {type(e).__name__}: {str(e)}")
+        traceback.print_exc()
 
 async def start_background_init():
     """
@@ -114,7 +120,9 @@ async def health_check():
     status = {
         "status": "online",
         "qdrant_connected": qdrant is not None,
-        "model_loaded": "clip" in models
+        "status": "online",
+        "qdrant_connected": qdrant is not None,
+        "models_loaded": list(models.keys())
     }
     return status
 
@@ -151,8 +159,8 @@ async def process_totenbild(file: UploadFile = File(...), mysql_id: int = 0):
     """
     try:
         # --- Prüfen, ob Modell und Qdrant bereit sind ---
-        if "clip" not in models:
-            raise HTTPException(status_code=503, detail="KI-Modell wurde noch nicht geladen oder konnte nicht geladen werden. Bitte Logs prüfen.")
+        if "vision" not in models:
+            raise HTTPException(status_code=503, detail="Vision-KI-Modell wurde noch nicht geladen.")
         if qdrant is None:
             raise HTTPException(status_code=503, detail="Keine Verbindung zu Qdrant möglich. Bitte Konfiguration prüfen.")
 
@@ -178,8 +186,9 @@ async def process_totenbild(file: UploadFile = File(...), mysql_id: int = 0):
         pil_img = Image.open(io.BytesIO(file_bytes))
         
         # Vektor erstellen (Liste von gleitkommazahlen)
-        # Wir übergeben das Bild als Liste [pil_img], um Ambiguitäten zu vermeiden
-        embeddings = models["clip"].encode([pil_img])
+        # Wir nutzen das Vision-Modell.
+        # Es kann sein, dass wir hier das Bild direkt übergeben können, aber als Liste ist es sicherer.
+        embeddings = models["vision"].encode([pil_img])
         embedding = embeddings[0].tolist()
         
         # --- C. Speichern in Qdrant ---
@@ -213,7 +222,9 @@ async def process_totenbild(file: UploadFile = File(...), mysql_id: int = 0):
         # HTTPException direkt weitergeben
         raise he
     except Exception as e:
+    except Exception as e:
         print(f"Schwerwiegender Fehler: {str(e)}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/search/")
@@ -223,13 +234,13 @@ async def search_images(query: str, limit: int = 5):
     """
     try:
         # --- Prüfen, ob Modell und Qdrant bereit sind ---
-        if "clip" not in models:
-            raise HTTPException(status_code=503, detail="KI-Modell wurde noch nicht geladen.")
+        if "text" not in models:
+            raise HTTPException(status_code=503, detail="Text-KI-Modell wurde noch nicht geladen.")
         if qdrant is None:
             raise HTTPException(status_code=503, detail="Keine Verbindung zu Qdrant.")
 
-        # Suchtext in Vektor wandeln
-        search_vector = models["clip"].encode(query).tolist()
+        # Suchtext in Vektor wandeln mit Multilingual Modell
+        search_vector = models["text"].encode(query).tolist()
         
         # Ähnliche Vektoren in Qdrant finden
         results = qdrant.search(
