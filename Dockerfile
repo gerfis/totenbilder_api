@@ -6,7 +6,7 @@ FROM python:3.11-slim-bookworm
 # tesseract-ocr-deu: Modernes Deutsch
 # tesseract-ocr-frak: Fraktur (Altdeutsch)
 # libgl1: Wird oft für OpenCV benötigt, falls du Bildvorverarbeitung machst
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-deu \
     tesseract-ocr-frak \
