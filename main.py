@@ -29,21 +29,21 @@ import asyncio
 
 # --- LIFESPAN (Startup & Shutdown Logik) ---
 
-async def initialize_app():
+def sync_initialize():
     """
-    Diese Funktion läuft im Hintergrund, damit der Server sofort startet.
+    Diese Funktion führt die blockierenden Aufrufe synchron aus.
+    Sie wird in einem eigenen Thread aufgerufen.
     """
     global qdrant
     
     # 1. Verbindung zu Qdrant
     try:
         print(f"HINTERGRUND: Versuche Verbindung zu Qdrant unter: {QDRANT_URL}")
-        # Wir setzen einen expliziten Timeout von 60 Sekunden für die Client-Anfragen
         qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60)
         
-        # Testen der Verbindung
+        # Testen der Verbindung (blockierend)
         collections = qdrant.get_collections()
-        print(f"HINTERGRUND: Erfolgreich mit Qdrant verbunden. Vorhandene Collections: {[c.name for c in collections.collections]}")
+        print(f"HINTERGRUND: Erfolgreich mit Qdrant verbunden.")
 
         # Collection erstellen, falls sie noch nicht existiert
         if not qdrant.collection_exists(COLLECTION_NAME):
@@ -52,32 +52,34 @@ async def initialize_app():
                 vectors_config=VectorParams(size=512, distance=Distance.COSINE),
             )
             print(f"HINTERGRUND: Collection '{COLLECTION_NAME}' neu erstellt.")
-        else:
-            print(f"HINTERGRUND: Collection '{COLLECTION_NAME}' gefunden.")
     except Exception as e:
         print(f"HINTERGRUND-FEHLER BEI QDRANT: {str(e)}")
         qdrant = None
 
-    # 2. KI-Modell laden (CLIP Multilingual)
+    # 2. KI-Modell laden (CLIP)
     try:
         print("HINTERGRUND: Lade KI-Modell (CLIP)... Dies kann einige Minuten dauern...")
-        # Lade in einem Thread, um den Eventpool nicht zu blockieren
-        loop = asyncio.get_event_loop()
-        models["clip"] = await loop.run_in_executor(None, lambda: SentenceTransformer('clip-ViT-B-32-multilingual-v1'))
+        models["clip"] = SentenceTransformer('clip-ViT-B-32-multilingual-v1')
         print("HINTERGRUND: KI-Modell erfolgreich geladen!")
     except Exception as e:
         print(f"HINTERGRUND-FEHLER BEIM KI-MODELL: {str(e)}")
 
+async def start_background_init():
+    """
+    Wrapper um die synchrone Initialisierung in einem Thread-Pool auszuführen.
+    """
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, sync_initialize)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Wird beim Start des Servers ausgeführt.
-    Startet die Initialisierung im Hintergrund.
+    FastAPI Lifespan. Startet die Initialisierung, gibt aber SOFORT die Kontrolle zurück.
     """
-    # Startet die Initialisierung, ohne den Boot-Vorgang zu blockieren
-    asyncio.create_task(initialize_app())
+    # Wir starten den Task und warten NICHT darauf
+    asyncio.create_task(start_background_init())
     
-    print("API-Server wird gestartet... (KI-Initialisierung läuft im Hintergrund)")
+    print("API-Server meldet Startbereitschaft. KI lädt im Hintergrund...")
     yield
     print("Server wird beendet.")
 
