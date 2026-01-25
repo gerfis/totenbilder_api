@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+qdrant-client
+sentence-transformers
+torch
+Pillow
+pytesseract
+numpy
+opencv-python-headless
