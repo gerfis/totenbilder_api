@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):
     yield
     print("Shutdown.")
 
-app = FastAPI(lifespan=lifespan, title="ToTenBilder API")
+app = FastAPI(lifespan=lifespan, title="Totenbilder API")
 
 # Mount Routers
 app.include_router(upload_router, prefix="/api", tags=["Upload/Index"])
