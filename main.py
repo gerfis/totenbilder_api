@@ -32,6 +32,8 @@ origins = [
     "http://localhost:3000",
     "https://totenbilder.at",
     "https://www.totenbilder.at",
+    "https://api.totenbilder.at",
+    "https://neue.totenbilder.at"
 ]
 
 app.add_middleware(
