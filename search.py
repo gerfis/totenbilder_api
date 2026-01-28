@@ -97,6 +97,13 @@ async def search_images(search_req: SearchQuery):
 
     return results
 
+@router.get("/search", response_model=List[SearchResult])
+async def search_images_get(query: str, limit: int = 36):
+    """
+    Ermöglicht die Text-Suche per GET-Request (z.B. für Browser-Tests).
+    """
+    return await search_images(SearchQuery(query=query, limit=limit))
+
 def create_result(hit):
     fname_key = hit.payload["filename"]
     score = round(hit.score, 3)

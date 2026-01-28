@@ -1,1 +1,83 @@
-# totenbilder_api
+# ToTenBilder API
+
+API-Backend für die semantische Suche in Bildern, basierend auf FastAPI, Qdrant und CLIP.
+
+## Features
+
+- **Semantische Suche**: Findet Bilder anhand von Textbeschreibungen oder ähnlichen Bildern.
+- **Auto-Indexing**: Indiziert Bilder aus einem S3-kompatiblen Bucket (z.B. Cloudflare R2).
+- **Hybrid-Architektur**: Nutzt `clip-ViT-B-32` für Bild-Embeddings und `clip-ViT-B-32-multilingual-v1` für Text-Queries.
+
+## Voraussetzungen
+
+Stelle sicher, dass eine `.env` Datei mit folgenden Variablen existiert:
+
+```env
+QDRANT_URL=...
+QDRANT_API_KEY=...
+QDRANT_COLLECTION_NAME=...
+R2_ENDPOINT_URL=...
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET_NAME=...
+R2_PREFIX=...
+R2_PUBLIC_BASE_URL=...
+```
+
+## API Endpoints
+
+### 🔍 Suche
+
+**`POST /api/search`**
+
+Sucht nach Bildern basierend auf Text oder einem Referenzbild.
+
+**Body (`json`):**
+```json
+{
+  "query": "Ein Grabstein aus Granit",
+  "similar": null,   // Optional: Dateiname eines Bildes für Ähnlichkeitssuche
+  "limit": 36
+}
+```
+
+**Antwort:**
+Eine Liste von Ergebnissen mit `filename`, `image_url` und `score`.
+
+---
+
+### ⚙️ Indexierung
+
+**`POST /api/index`**
+
+Startet den Indexierungsprozess für den gesamten konfigurierten Bucket im Hintergrund.
+Prüft existierende Bilder und überspringt diese (außer `force_reindex` ist aktiv).
+
+**Body (`json`):**
+```json
+{
+  "force_reindex": false
+}
+```
+
+**`POST /api/index-one`**
+
+Indiziert ein spezifisches Bild sofort.
+
+**Body (`json`):**
+```json
+{
+  "filename": "ordner/bild.jpg"
+}
+```
+
+---
+
+### ❤️ Health Check
+
+**`GET /health`**
+
+Prüft, ob der Service läuft.
+```json
+{ "status": "ok" }
+```
