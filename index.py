@@ -5,7 +5,7 @@ import io
 import boto3
 from dotenv import load_dotenv
 from PIL import Image
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Header, Depends, status
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
@@ -22,11 +22,29 @@ R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY")
 R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
 R2_PREFIX = os.getenv("R2_PREFIX")
 COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME")
+INDEX_API_KEY = os.getenv("INDEX_API_KEY")
 
 DEVICE = 'mps' if torch.backends.mps.is_available() else 'cpu'
 
 # Router definieren
+# Router definieren
 router = APIRouter()
+
+async def verify_index_key(x_api_key: str = Header(..., description="API Key für Indexierungs-Zugriff")):
+    if not INDEX_API_KEY:
+        # Falls kein Key konfiguriert ist, loggen wir das oder failen. 
+        # Sicherheitshalber failen wir, wenn der User Schutz will aber keinen Key gesetzt hat.
+        print("WARNUNG: INDEX_API_KEY nicht gesetzt!")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail="Server Konfigurationsfehler: INDEX_API_KEY fehlt"
+        )
+        
+    if x_api_key != INDEX_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API Key",
+        )
 
 # Globale Variablen für Modul-Level Caching (Optional, wird hier lazy geladen)
 _model_img = None
@@ -160,7 +178,7 @@ def process_indexing(force_reindex: bool = False):
 class SingleIndexRequest(BaseModel):
     filename: str
 
-@router.post("/index-one")
+@router.post("/index-one", dependencies=[Depends(verify_index_key)])
 async def index_single_image(request: SingleIndexRequest):
     """
     Indiziert ein einzelnes Bild aus dem S3 Bucket.
@@ -208,7 +226,7 @@ async def index_single_image(request: SingleIndexRequest):
 class IndexRequest(BaseModel):
     force_reindex: bool = False
 
-@router.post("/index")
+@router.post("/index", dependencies=[Depends(verify_index_key)])
 async def trigger_indexing(request: IndexRequest, background_tasks: BackgroundTasks):
     """
     Startet die Indexierung der Bilder vom R2 Bucket in Qdrant im Hintergrund.

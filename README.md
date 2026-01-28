@@ -22,6 +22,7 @@ R2_SECRET_ACCESS_KEY=...
 R2_BUCKET_NAME=...
 R2_PREFIX=...
 R2_PUBLIC_BASE_URL=...
+INDEX_API_KEY=mein_geheimer_api_key
 ```
 
 ## API Endpoints
@@ -44,6 +45,20 @@ Sucht nach Bildern basierend auf Text oder einem Referenzbild.
 **Antwort:**
 Eine Liste von Ergebnissen mit `filename`, `image_url` und `score`.
 
+**`GET /api/search`**
+
+Ermöglicht die Text-Suche per GET-Request (z.B. für Browser-Tests).
+
+**Parameter:**
+- `query`: Suchtext (z.B. `?query=Baum`).
+- `limit`: (Optional) Anzahl der Ergebnisse (Standard: 36).
+
+**Beispiel:**
+`GET /api/search?query=Grabstein`
+
+**Antwort:**
+Identisch zu `POST /api/search`.
+
 ---
 
 ### ⚙️ Indexierung
@@ -52,6 +67,9 @@ Eine Liste von Ergebnissen mit `filename`, `image_url` und `score`.
 
 Startet den Indexierungsprozess für den gesamten konfigurierten Bucket im Hintergrund.
 Prüft existierende Bilder und überspringt diese (außer `force_reindex` ist aktiv).
+
+**Benötigt Header:**
+`X-API-Key: <INDEX_API_KEY>`
 
 **Body (`json`):**
 ```json
