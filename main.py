@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import asyncio
 
@@ -25,6 +26,21 @@ async def lifespan(app: FastAPI):
     print("Shutdown.")
 
 app = FastAPI(lifespan=lifespan, title="Totenbilder API")
+
+# Configure CORS
+origins = [
+    "http://localhost:3000",
+    "https://totenbilder.at",
+    "https://www.totenbilder.at",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Mount Routers
 app.include_router(upload_router, prefix="/api", tags=["Upload/Index"])
