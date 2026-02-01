@@ -6,3 +6,4 @@ torch
 Pillow
 boto3
 python-dotenv
+mysql-connector-python
