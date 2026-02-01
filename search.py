@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue
+from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
 import torch
 
 load_dotenv()
@@ -43,6 +43,7 @@ class SearchQuery(BaseModel):
     similar: Optional[str] = None
     limit: int = 30
     offset: int = 0
+    delta: Optional[str] = "alle"
 
 class SearchResult(BaseModel):
     filename: str
@@ -54,13 +55,32 @@ async def search_images(search_req: SearchQuery):
     client = get_qdrant_client()
     results = []
 
+    # Filter vorbereiten
+    filter_conditions = []
+    # delta Filterlogik
+    # Wir unterstützen: "alle" (kein Filter), "0" (delta==0), ">0" (delta > 0)
+    # Default ist "alle" via Model
+
+
+    if search_req.delta == "0":
+         # Exakt 0
+         filter_conditions.append(FieldCondition(key="delta", match=MatchValue(value=0)))
+    elif search_req.delta == ">0":
+         # Größer 0
+         filter_conditions.append(FieldCondition(key="delta", range=Range(gt=0)))
+
     if search_req.similar:
+
+        
         # 1. Vektor des Referenzbildes holen
+        # Anm.: Wir filtern NICHT beim Holen des Referenzbildes, sondern beim Suchen der Ähnlichen.
+        # Das Referenzbild selbst suchen wir nur per filename.
         ref_points = client.scroll(
             collection_name=COLLECTION_NAME,
             scroll_filter=Filter(
                 must=[FieldCondition(key="filename", match=MatchValue(value=search_req.similar))]
             ),
+
             limit=1,
             with_vectors=True
         )
@@ -72,7 +92,9 @@ async def search_images(search_req: SearchQuery):
             points = client.query_points(
                 collection_name=COLLECTION_NAME,
                 query=ref_vector,
+                query_filter=Filter(must=filter_conditions) if filter_conditions else None,
                 limit=search_req.limit,
+
                 offset=search_req.offset
             ).points
             
@@ -88,6 +110,7 @@ async def search_images(search_req: SearchQuery):
         points = client.query_points(
             collection_name=COLLECTION_NAME,
             query=text_vector,
+            query_filter=Filter(must=filter_conditions) if filter_conditions else None,
             limit=search_req.limit,
             offset=search_req.offset
         ).points
@@ -101,11 +124,11 @@ async def search_images(search_req: SearchQuery):
     return results
 
 @router.get("/search", response_model=List[SearchResult])
-async def search_images_get(query: str, limit: int = 30, offset: int = 0):
+async def search_images_get(query: str, limit: int = 30, offset: int = 0, delta: str = "alle"):
     """
     Ermöglicht die Text-Suche per GET-Request (z.B. für Browser-Tests).
     """
-    return await search_images(SearchQuery(query=query, limit=limit, offset=offset))
+    return await search_images(SearchQuery(query=query, limit=limit, offset=offset, delta=delta))
 
 def create_result(hit):
     fname_key = hit.payload["filename"]
