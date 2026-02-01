@@ -41,7 +41,8 @@ def get_qdrant_client():
 class SearchQuery(BaseModel):
     query: Optional[str] = None
     similar: Optional[str] = None
-    limit: int = 36
+    limit: int = 30
+    offset: int = 0
 
 class SearchResult(BaseModel):
     filename: str
@@ -71,7 +72,8 @@ async def search_images(search_req: SearchQuery):
             points = client.query_points(
                 collection_name=COLLECTION_NAME,
                 query=ref_vector,
-                limit=search_req.limit
+                limit=search_req.limit,
+                offset=search_req.offset
             ).points
             
             for hit in points:
@@ -86,7 +88,8 @@ async def search_images(search_req: SearchQuery):
         points = client.query_points(
             collection_name=COLLECTION_NAME,
             query=text_vector,
-            limit=search_req.limit
+            limit=search_req.limit,
+            offset=search_req.offset
         ).points
         
         for hit in points:
@@ -98,11 +101,11 @@ async def search_images(search_req: SearchQuery):
     return results
 
 @router.get("/search", response_model=List[SearchResult])
-async def search_images_get(query: str, limit: int = 36):
+async def search_images_get(query: str, limit: int = 30, offset: int = 0):
     """
     Ermöglicht die Text-Suche per GET-Request (z.B. für Browser-Tests).
     """
-    return await search_images(SearchQuery(query=query, limit=limit))
+    return await search_images(SearchQuery(query=query, limit=limit, offset=offset))
 
 def create_result(hit):
     fname_key = hit.payload["filename"]

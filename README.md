@@ -38,7 +38,8 @@ Sucht nach Bildern basierend auf Text oder einem Referenzbild.
 {
   "query": "Ein Grabstein aus Granit",
   "similar": null,   // Optional: Dateiname eines Bildes für Ähnlichkeitssuche
-  "limit": 36
+  "limit": 30,       // Optional: Standard 30
+  "offset": 0        // Optional: Standard 0 (für Pagination)
 }
 ```
 
@@ -51,7 +52,8 @@ Ermöglicht die Text-Suche per GET-Request (z.B. für Browser-Tests).
 
 **Parameter:**
 - `query`: Suchtext (z.B. `?query=Baum`).
-- `limit`: (Optional) Anzahl der Ergebnisse (Standard: 36).
+- `limit`: (Optional) Anzahl der Ergebnisse (Standard: 30).
+- `offset`: (Optional) Offset für Pagination (Standard: 0).
 
 **Beispiel:**
 `GET /api/search?query=Grabstein`
