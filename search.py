@@ -49,6 +49,8 @@ class SearchResult(BaseModel):
     filename: str
     image_url: str
     score: float
+    nid: Optional[int] = None
+    delta: Optional[int] = None
 
 @router.post("/search", response_model=List[SearchResult])
 async def search_images(search_req: SearchQuery):
@@ -131,7 +133,9 @@ async def search_images_get(query: str, limit: int = 30, offset: int = 0, delta:
     return await search_images(SearchQuery(query=query, limit=limit, offset=offset, delta=delta))
 
 def create_result(hit):
-    fname_key = hit.payload["filename"]
+    fname_key = hit.payload.get("filename")
+    nid = hit.payload.get("nid")
+    delta = hit.payload.get("delta")
     score = round(hit.score, 3)
     
     # URL Konstruktion
@@ -141,5 +145,7 @@ def create_result(hit):
     return SearchResult(
         filename=fname_key,
         image_url=image_url,
-        score=score
+        score=score,
+        nid=nid,
+        delta=delta
     )
