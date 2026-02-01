@@ -11,7 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # 3. Python-Dependencies installieren
+
 COPY requirements.txt .
+RUN pip install --upgrade pip
+# CPU-Version von Torch installieren, um Speicher zu sparen (Linux Container hat meist keine GPU)
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 4. Restlichen Code kopieren
