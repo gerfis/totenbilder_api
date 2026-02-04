@@ -8,6 +8,7 @@ from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
 import torch
+from deep_translator import GoogleTranslator
 
 load_dotenv()
 
@@ -28,8 +29,8 @@ _qdrant_client = None
 def get_model():
     global _model_text
     if _model_text is None:
-        print(f"Lade multilinguales TEXT Model auf {DEVICE}...")
-        _model_text = SentenceTransformer('sentence-transformers/clip-ViT-B-32-multilingual-v1', device=DEVICE)
+        print(f"Lade CLIP TEXT Model (standard) auf {DEVICE}...")
+        _model_text = SentenceTransformer('clip-ViT-B-32', device=DEVICE)
     return _model_text
 
 def get_qdrant_client():
@@ -106,8 +107,16 @@ async def search_images(search_req: SearchQuery):
              raise HTTPException(status_code=404, detail=f"Bild '{search_req.similar}' nicht gefunden.")
 
     elif search_req.query:
+        # Übersetzung von Deutsch nach Englisch für bessere Suchergebnisse in CLIP
+        try:
+            translated_query = GoogleTranslator(source='auto', target='en').translate(search_req.query)
+            print(f"Suche nach: '{search_req.query}' -> Übersetzung: '{translated_query}'")
+        except Exception as e:
+            print(f"Übersetzungsfehler: {e}")
+            translated_query = search_req.query
+
         local_model = get_model()
-        text_vector = local_model.encode(search_req.query).tolist()
+        text_vector = local_model.encode(translated_query).tolist()
         
         points = client.query_points(
             collection_name=COLLECTION_NAME,
