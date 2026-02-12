@@ -4,94 +4,213 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Totenbilder Datenbank Upload</title>
+    <title>Totenbilder Admin Dashboard</title>
     <style>
+        :root {
+            --bg-color: #1a1a1a;
+            --card-bg: #2d2d2d;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+            --accent-color: #3b82f6;
+            --accent-hover: #2563eb;
+            --success: #10b981;
+            --danger: #ef4444;
+            --border-radius: 12px;
+        }
+
+        * {
+            box-sizing: border_box;
+            margin: 0;
+            padding: 0;
+        }
+
         body {
-            font-family: sans-serif;
-            max-width: 800px;
-            margin: 2rem auto;
-            padding: 0 1rem;
-            background-color: #f4f4f9;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            width: 100vw;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
 
         .container {
-            background: white;
-            padding: 2rem;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-
-        /* Das Eingabefeld für die ID */
-        .input-group {
-            margin-bottom: 1.5rem;
-        }
-
-        label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: bold;
-        }
-
-        input[type="number"] {
             width: 100%;
-            padding: 10px;
-            font-size: 1.2rem;
-            border: 1px solid #ccc;
-            border-radius: 4px;
+            max-width: 1200px;
+            padding: 40px 20px;
         }
 
-        /* Die Drop-Zone */
-        #drop-zone {
-            border: 3px dashed #ccc;
-            border-radius: 8px;
-            padding: 3rem;
+        header {
+            margin-bottom: 40px;
             text-align: center;
-            color: #888;
-            transition: all 0.3s ease;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #3b82f6, #8b5cf6);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+        }
+
+        /* Grid Layout */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            padding: 24px;
+            border-radius: var(--border-radius);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            transition: transform 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #404040;
+            padding-bottom: 10px;
+        }
+
+        .card h2 {
+            font-size: 1.25rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Controls */
+        input[type="text"],
+        input[type="number"],
+        select {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 16px;
+            background: #404040;
+            border: 1px solid #505050;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--accent-color);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background-color: var(--accent-color);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background-color: #505050;
+            color: white;
+            margin-top: 10px;
+        }
+
+        .btn-secondary:hover {
+            background-color: #606060;
+        }
+
+        .btn.loading {
+            opacity: 0.7;
+            cursor: wait;
+        }
+
+        /* Search Results */
+        .results-area {
+            margin-top: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 10px;
+        }
+
+        .result-item {
+            position: relative;
+            aspect-ratio: 1;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
             cursor: pointer;
         }
 
-        #drop-zone.dragover {
-            border-color: #3b82f6;
-            background-color: #eff6ff;
-            color: #3b82f6;
-        }
-
-        #drop-zone.uploading {
-            opacity: 0.5;
-            pointer-events: none;
-        }
-
-        /* Ergebnisanzeige */
-        #result {
-            margin-top: 2rem;
-            display: none;
-        }
-
-        .success {
-            color: green;
-            font-weight: bold;
-        }
-
-        .error {
-            color: red;
-            font-weight: bold;
-        }
-
-        textarea {
+        .result-item img {
             width: 100%;
-            height: 150px;
-            margin-top: 10px;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-family: monospace;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.3s;
         }
 
-        .meta-info {
-            font-size: 0.9rem;
-            color: #666;
-            margin-top: 5px;
+        .result-item:hover img {
+            transform: scale(1.1);
+        }
+
+        .result-score {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            font-size: 10px;
+            padding: 4px;
+            text-align: center;
+        }
+
+        /* Logs / Output */
+        .log-output {
+            margin-top: 20px;
+            background: #111;
+            color: #0f0;
+            font-family: monospace;
+            padding: 10px;
+            border-radius: 8px;
+            height: 150px;
+            overflow-y: auto;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+
+        /* Tabs/Sections styling helpers */
+        .section-icon {
+            font-size: 1.5rem;
         }
     </style>
 </head>
@@ -99,106 +218,282 @@
 <body>
 
     <div class="container">
-        <div style="text-align: right; margin-bottom: 20px;">
-            <a href="/suche" style="text-decoration: none; color: #3b82f6; font-weight: bold;">🔍 Zur Suche wechseln</a>
-        </div>
-        <h1>⚰️ Totenbild Digitalisierung</h1>
+        <header>
+            <h1>Totenbilder Admin</h1>
+            <p class="subtitle">Verwaltung & Suche Dashboard</p>
+        </header>
 
-        <div class="input-group">
-            <label for="mysql-id">Schritt 1: MySQL ID eingeben</label>
-            <input type="number" id="mysql-id" placeholder="z.B. 1042">
-        </div>
+        <div class="dashboard-grid">
 
-        <div id="drop-zone">
-            <h3>Schritt 2: Bild hier ablegen</h3>
-            <p>oder klicken, um Datei auszuwählen</p>
-            <input type="file" id="file-input" hidden accept="image/*">
-        </div>
+            <!-- Card 1: Indexing -->
+            <div class="card">
+                <div class="card-header">
+                    <h2><span class="section-icon">📥</span> Indexierung</h2>
+                </div>
+                <p style="margin-bottom: 15px; font-size: 0.9rem; color: #ccc;">
+                    Bilder vom R2 Bucket in Qdrant Vektor-Datenbank indexieren.
+                </p>
 
-        <div id="result">
-            <h3 id="status-title">Ergebnis</h3>
-            <p class="meta-info">MySQL ID: <span id="res-id"></span> | Vektorisierung: ✅</p>
-            <label>Erkannter Text (OCR):</label>
-            <textarea id="ocr-text" readonly></textarea>
-            <button onclick="copyText()">Text kopieren</button>
+                <input type="text" id="index-filename" placeholder="Einzelne Datei (optional, z.B. img.jpg)">
+
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn btn-primary" onclick="triggerIndex('single')">Einzeln Indexieren</button>
+                    <button class="btn btn-secondary" onclick="triggerIndex('all')">Alles Indexieren</button>
+                </div>
+                <div id="index-log" class="log-output">Bereit...</div>
+            </div>
+
+            <!-- Card 2: Payload Update -->
+            <div class="card">
+                <div class="card-header">
+                    <h2><span class="section-icon">🔄</span> Payload Sync</h2>
+                </div>
+                <p style="margin-bottom: 15px; font-size: 0.9rem; color: #ccc;">
+                    Metadaten (NID, Delta) aus MySQL in Qdrant synchronisieren.
+                </p>
+
+                <input type="text" id="payload-filename" placeholder="Einzelne Datei (optional)">
+
+                <button class="btn btn-primary" onclick="triggerPayloadUpdate(false)">
+                    Einzeln Aktualisieren
+                </button>
+                <button class="btn btn-secondary" onclick="triggerPayloadUpdate(true)">
+                    Alle Aktualisieren (Bulk)
+                </button>
+
+                <div id="payload-log" class="log-output">Bereit...</div>
+            </div>
+
+            <!-- Card 3: Missing NID Check -->
+            <!-- Card 3: Missing in Qdrant Check -->
+            <div class="card">
+                <div class="card-header">
+                    <h2><span class="section-icon">⚠️</span> Qdrant-Abgleich</h2>
+                </div>
+                <p style="margin-bottom: 15px; font-size: 0.9rem; color: #ccc;">
+                    Vergleicht MySQL vs. Qdrant und zeigt Bilder, die in MySQL sind, aber nicht in Qdrant indexiert
+                    wurden.
+                </p>
+
+                <button class="btn btn-primary" onclick="checkMissingInQdrant()">
+                    Unterschiede prüfen
+                </button>
+
+                <div id="missing-qdrant-log" class="log-output" style="height: 200px;">Bereit...</div>
+            </div>
+
+            <!-- Card 3: Suche -->
+            <div class="card" style="grid-column: 1 / -1;">
+                <div class="card-header">
+                    <h2><span class="section-icon">🔍</span> Suche (Preview)</h2>
+                </div>
+
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" id="search-query" placeholder="Suchbegriff eingeben..."
+                        style="margin-bottom: 0;">
+                    <select id="search-delta" style="width: 150px; margin-bottom: 0;">
+                        <option value="alle">Alle</option>
+                        <option value="0">Vorderseite (0)</option>
+                        <option value=">0">Rückseite (>0)</option>
+                    </select>
+                    <button class="btn btn-primary" style="width: auto;" onclick="performSearch()">Suchen</button>
+                </div>
+
+                <div id="search-results" class="results-area">
+                    <!-- Results will appear here -->
+                    <div style="grid-column: 1/-1; text-align: center; color: #666; padding: 20px;">
+                        Noch keine Suche ausgeführt.
+                    </div>
+                </div>
+            </div>
+
         </div>
     </div>
 
     <script>
-        const dropZone = document.getElementById('drop-zone');
-        const fileInput = document.getElementById('file-input');
-        const idInput = document.getElementById('mysql-id');
-        const resultDiv = document.getElementById('result');
+        const API_BASE = '/api';
 
-        // Klick auf Dropzone öffnet Dateimanager
-        dropZone.addEventListener('click', () => fileInput.click());
+        // Helper for logging
+        function log(elementId, message, type = 'info') {
+            const el = document.getElementById(elementId);
+            const time = new Date().toLocaleTimeString();
+            el.innerHTML = `[${time}] ${message}\n` + el.innerHTML;
+        }
 
-        // Drag & Drop Effekte
-        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
-        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        // --- Indexing Logic ---
+        async function triggerIndex(type) {
+            const filename = document.getElementById('index-filename').value;
+            const logId = 'index-log';
 
-        // Drop Event
-        dropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dropZone.classList.remove('dragover');
-            if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
-        });
+            // Dummy API Key handling (if needed, otherwise relying on backend default/env)
+            const headers = {
+                'Content-Type': 'application/json',
+                'x-api-key': 'your-secret-key-here' // In production, manage this securely
+            };
 
-        // Datei ausgewählt über Dialog
-        fileInput.addEventListener('change', () => {
-            if (fileInput.files.length) uploadFile(fileInput.files[0]);
-        });
+            try {
+                log(logId, 'Starte Anfrage...', 'info');
 
-        async function uploadFile(file) {
-            const mysqlId = idInput.value;
-            if (!mysqlId) {
-                alert("⚠️ Bitte zuerst eine MySQL ID eingeben!");
+                let endpoint = '';
+                let body = {};
+
+                if (type === 'single') {
+                    if (!filename) {
+                        alert("Bitte Dateinamen eingeben!");
+                        return;
+                    }
+                    endpoint = '/index-one';
+                    body = { filename: filename };
+                } else {
+                    if (!confirm("Wirklich ALLES neu indexieren? Das kann dauern.")) return;
+                    endpoint = '/index';
+                    body = { force_reindex: false };
+                }
+
+                const res = await fetch(`${API_BASE}${endpoint}`, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify(body)
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    log(logId, `Erfolg: ${JSON.stringify(data)}`, 'success');
+                } else {
+                    log(logId, `Fehler: ${data.detail || 'Unbekannt'}`, 'error');
+                }
+
+            } catch (e) {
+                log(logId, `Netzwerkfehler: ${e.message}`, 'error');
+            }
+        }
+
+        // --- Payload Logic ---
+        async function triggerPayloadUpdate(all) {
+            const filename = document.getElementById('payload-filename').value;
+            const logId = 'payload-log';
+
+            if (!all && !filename) {
+                alert("Bitte Dateinamen eingeben für Einzel-Update.");
                 return;
             }
 
-            // UI Feedback
-            dropZone.innerHTML = "⏳ Verarbeite Bild... (OCR & KI)";
-            dropZone.classList.add('uploading');
-            resultDiv.style.display = 'none';
-
-            const formData = new FormData();
-            formData.append('file', file);
+            if (all && !confirm("Möchtest du wirklich ALLE Metadaten neu synchronisieren?")) return;
 
             try {
-                // API Aufruf an dein Backend
-                const response = await fetch(`/process-totenbild/?mysql_id=${mysqlId}`, {
+                log(logId, `Starte Payload Update (${all ? 'ALLE' : filename})...`);
+                const res = await fetch(`${API_BASE}/update-payload`, {
                     method: 'POST',
-                    body: formData
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        filename: filename || null, // Ensure explicit null if empty string
+                        all: all
+                    })
                 });
-                const data = await response.json();
 
-                if (response.ok) {
-                    showResult(data);
-                    dropZone.innerHTML = "✅ Fertig! Nächstes Bild?";
+                const data = await res.json();
+                if (res.ok) {
+                    log(logId, `OK: ${data.message}`);
                 } else {
-                    throw new Error(data.detail || "Fehler beim Server");
+                    log(logId, `Fehler: ${data.detail}`);
                 }
-            } catch (error) {
-                alert("Fehler: " + error.message);
-                dropZone.innerHTML = "❌ Fehler. Erneut versuchen.";
-            } finally {
-                dropZone.classList.remove('uploading');
+
+            } catch (e) {
+                log(logId, `Error: ${e.message}`);
             }
         }
 
-        function showResult(data) {
-            resultDiv.style.display = 'block';
-            document.getElementById('res-id').innerText = data.mysql_id;
-            document.getElementById('ocr-text').value = data.ocr_text;
+        // --- Missing in Qdrant Logic ---
+        async function checkMissingInQdrant() {
+            const logId = 'missing-qdrant-log';
+            const logEl = document.getElementById(logId);
+
+            try {
+                log(logId, "Lade Daten aus MySQL, Qdrant und R2 (dies kann dauern)...");
+                logEl.innerHTML += "Bitte warten...\n";
+
+                const res = await fetch(`${API_BASE}/missing-in-qdrant`);
+                const data = await res.json();
+
+                if (res.ok) {
+                    log(logId, `Fertig!`, 'success');
+                    log(logId, `MySQL Gesamt: ${data.total_mysql}`);
+                    log(logId, `Qdrant Gesamt: ${data.total_qdrant}`);
+                    log(logId, `Fehlend in Qdrant: ${data.total_missing_in_qdrant}`);
+
+                    // 1. Ready to Index (In MySQL, In R2, Missing Qdrant)
+                    if (data.ready_to_index_count > 0) {
+                        const list = data.ready_to_index_files.sort().map(f => `• ${f}`).join('\n');
+                        logEl.innerHTML += `\n[OK] In Bucket vorhanden, Indexierung fehlt (${data.ready_to_index_count}):\n${list}\n`;
+                    } else {
+                        logEl.innerHTML += "\n[OK] Keine indexierbaren Bilder offen.\n";
+                    }
+
+                    // 2. Missing in R2 (In MySQL, Missing Qdrant, Missing R2)
+                    if (data.missing_in_r2_count > 0) {
+                        const list = data.missing_in_r2_files.sort().map(f => `• ${f}`).join('\n');
+                        logEl.innerHTML += `\n[WARNUNG] In DB, aber NICHT im Bucket (${data.missing_in_r2_count}):\n${list}\n`;
+                    }
+
+                    if (data.total_missing_in_qdrant === 0) {
+                        logEl.innerHTML += "\nAlles synchron!\n";
+                    }
+
+                } else {
+                    log(logId, `Fehler: ${data.detail}`, 'error');
+                }
+            } catch (e) {
+                log(logId, `Netzwerkfehler: ${e.message}`, 'error');
+            }
         }
 
-        function copyText() {
-            const copyText = document.getElementById("ocr-text");
-            copyText.select();
-            document.execCommand("copy");
+        // --- Search Logic ---
+        async function performSearch() {
+            const query = document.getElementById('search-query').value;
+            const delta = document.getElementById('search-delta').value;
+            const container = document.getElementById('search-results');
+
+            if (!query) return;
+
+            container.innerHTML = '<div style="color:white; padding:20px;">Suche läuft...</div>';
+
+            try {
+                const res = await fetch(`${API_BASE}/search`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        query: query,
+                        limit: 20,
+                        delta: delta
+                    })
+                });
+
+                const results = await res.json();
+                container.innerHTML = '';
+
+                if (results.length === 0) {
+                    container.innerHTML = '<div style="color:#aaa; padding:20px;">Keine Ergebnisse.</div>';
+                    return;
+                }
+
+                results.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'result-item';
+                    div.title = `File: ${item.filename}\nScore: ${item.score}\nNID: ${item.nid}\nDelta: ${item.delta}`;
+                    div.innerHTML = `
+                        <img src="${item.image_url}" loading="lazy" alt="${item.filename}">
+                        <div class="result-score">${(item.score * 100).toFixed(1)}%</div>
+                    `;
+                    div.onclick = () => window.open(item.image_url, '_blank');
+                    container.appendChild(div);
+                });
+
+            } catch (e) {
+                container.innerHTML = `<div style="color:red; padding:20px;">Fehler: ${e.message}</div>`;
+            }
         }
     </script>
-
 </body>
 
 </html>

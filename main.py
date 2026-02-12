@@ -45,8 +45,24 @@ app.add_middleware(
 )
 
 # Mount Routers
+from payload import router as payload_router
 app.include_router(upload_router, prefix="/api", tags=["Upload/Index"])
 app.include_router(search_router, prefix="/api", tags=["Search"])
+app.include_router(payload_router, prefix="/api", tags=["Maintenance"])
+
+# Static Files
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse, FileResponse
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/static/index.html")
+
+@app.get("/suche")
+async def search_page():
+    return FileResponse("static/search.html")
 
 @app.get("/health")
 def health():
