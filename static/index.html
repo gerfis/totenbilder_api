@@ -43,7 +43,9 @@
 
         header {
             margin-bottom: 40px;
-            text-align: center;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
         h1 {
@@ -219,8 +221,12 @@
 
     <div class="container">
         <header>
-            <h1>Totenbilder Admin</h1>
-            <p class="subtitle">Verwaltung & Suche Dashboard</p>
+            <div>
+                <h1>Totenbilder Admin</h1>
+                <p class="subtitle">Verwaltung & Suche Dashboard</p>
+            </div>
+            <button class="btn btn-secondary" onclick="logout()"
+                style="width: auto; background-color: #ef4444; color: white;">Logout</button>
         </header>
 
         <div class="dashboard-grid">
@@ -491,6 +497,17 @@
 
             } catch (e) {
                 container.innerHTML = `<div style="color:red; padding:20px;">Fehler: ${e.message}</div>`;
+            }
+        }
+        // --- Logout Logic ---
+        async function logout() {
+            try {
+                await fetch('/auth/logout', { method: 'POST' });
+                window.location.href = '/static/login.html';
+            } catch (e) {
+                console.error("Logout failed", e);
+                // Force redirect anyway
+                window.location.href = '/static/login.html';
             }
         }
     </script>

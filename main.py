@@ -7,6 +7,10 @@ import asyncio
 # aber wir nutzen die Router direkt
 from index import router as upload_router, get_model as get_img_model
 from search import router as search_router, get_model as get_text_model
+from auth import router as auth_router, SESSIONS
+from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi import Request
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -44,11 +48,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Auth Middleware für statische Seiten
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        # Schutz für /static Bereich
+        if path.startswith("/static"):
+            # Login Seite immer erlauben
+            if path == "/static/login.html":
+                return await call_next(request)
+            
+            # Wir schützen explizit .html Dateien (Dashboard, Suche etc.)
+            # CSS/JS/Bilder lassen wir vorerst offen, damit Styles beim Login funktionieren (falls extern)
+            # und weil der User explizit "statische Seiten" sagte.
+            if path.endswith(".html") or path.endswith("/"): # protection for directories too if browsing enabled
+                token = request.cookies.get("session_token")
+                if not token or token not in SESSIONS:
+                    return RedirectResponse(url="/static/login.html")
+        
+        return await call_next(request)
+
+app.add_middleware(AuthMiddleware)
+
 # Mount Routers
 from payload import router as payload_router
 app.include_router(upload_router, prefix="/api", tags=["Upload/Index"])
 app.include_router(search_router, prefix="/api", tags=["Search"])
 app.include_router(payload_router, prefix="/api", tags=["Maintenance"])
+app.include_router(auth_router, prefix="/auth", tags=["Auth"])
 
 # Static Files
 from fastapi.staticfiles import StaticFiles
