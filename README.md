@@ -1,107 +1,136 @@
 # ToTenBilder API
 
-API-Backend für die semantische Suche in Bildern, basierend auf FastAPI, Qdrant und CLIP.
+Modernes API-Backend für die semantische Suche in historischen Sterbebildern (Totenbildern).
+Basierend auf **FastAPI**, **Qdrant**, **MySQL** und **FastEmbed**.
 
 ## Features
 
-- **Semantische Suche**: Findet Bilder anhand von Textbeschreibungen oder ähnlichen Bildern.
-- **Auto-Indexing**: Indiziert Bilder aus einem S3-kompatiblen Bucket (z.B. Cloudflare R2).
-- **Hybrid-Architektur**: Nutzt `clip-ViT-B-32` für Bild-Embeddings und `clip-ViT-B-32-multilingual-v1` für Text-Queries.
+- **Semantische Suche**: Findet Bilder anhand von Textbeschreibungen ("Grabstein mit Engel") oder visueller Ähnlichkeit zu anderen Bildern.
+- **High-Performance AI**: Nutzt `FastEmbed` (Quantized CLIP Models) für extrem schnelle und speicherschonende Vektorisierung.
+- **Hybrid-Datenhaltung**:
+  - **Vektoren**: Qdrant (für Ähnlichkeitssuche).
+  - **Metadaten**: MySQL (für NID, Delta, Status).
+  - **Storage**: Cloudflare R2 (S3-kompatibel).
+- **Auto-Sync**: Background-Tasks zur Synchronisation von MySQL-Metadaten in den Vektor-Index.
+- **Integrierte Security**: Session-basiertes Login-System und API-Key Schutz für Admin-Tasks.
+- **Frontend**: Integriertes statisches Dashboard für Suche und Verwaltung.
 
 ## Voraussetzungen
 
-Stelle sicher, dass eine `.env` Datei mit folgenden Variablen existiert:
+### Installation
+
+```bash
+pip install -r requirements.txt
+```
+
+### Konfiguration (.env)
+
+Erstelle eine `.env` Datei im Hauptverzeichnis:
 
 ```env
-QDRANT_URL=...
+# --- Server Config ---
+INDEX_API_KEY=mein_geheimer_admin_key  # Für Indexing-Endpoints
+
+# --- Qdrant Vector DB ---
+QDRANT_URL=https://...
 QDRANT_API_KEY=...
-QDRANT_COLLECTION_NAME=...
-R2_ENDPOINT_URL=...
+QDRANT_COLLECTION_NAME=totenbilder
+
+# --- S3 / Cloudflare R2 Storage ---
+R2_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com
 R2_ACCESS_KEY_ID=...
 R2_SECRET_ACCESS_KEY=...
 R2_BUCKET_NAME=...
-R2_PREFIX=...
-R2_PUBLIC_BASE_URL=...
-INDEX_API_KEY=mein_geheimer_api_key
+R2_PREFIX=totenbilder/
+R2_PUBLIC_BASE_URL=https://pub-...
+
+# --- MySQL Datenbank ---
+DB_HOST=localhost
+DB_USER=root
+DB_PASSWORD=...
+DB_NAME=totenbilder_db
 ```
 
-## API Endpoints
+## Starten
 
-### 🔍 Suche
-
-**`POST /api/search`**
-
-Sucht nach Bildern basierend auf Text oder einem Referenzbild.
-
-**Body (`json`):**
-```json
-{
-  "query": "Ein Grabstein aus Granit",
-  "similar": null,   // Optional: Dateiname eines Bildes für Ähnlichkeitssuche
-  "limit": 30,       // Optional: Standard 30
-  "offset": 0,        // Optional: Standard 0 (für Pagination)
-  "delta": "alle"    // Optional: "alle" (default), "0", oder ">0"
-}
-
+```bash
+python main.py
 ```
-
-**Antwort:**
-Eine Liste von Ergebnissen mit `filename`, `image_url` und `score`.
-
-**`GET /api/search`**
-
-Ermöglicht die Text-Suche per GET-Request (z.B. für Browser-Tests).
-
-**Parameter:**
-- `query`: Suchtext (z.B. `?query=Baum`).
-- `limit`: (Optional) Anzahl der Ergebnisse (Standard: 30).
-- `offset`: (Optional) Offset für Pagination (Standard: 0).
-- `delta`: (Optional) Filter für Delta-Feld: "alle", "0", oder ">0".
-
-
-**Beispiel:**
-`GET /api/search?query=Grabstein`
-
-**Antwort:**
-Identisch zu `POST /api/search`.
+Der Server läuft standardmäßig auf `http://0.0.0.0:8000`.
 
 ---
 
-### ⚙️ Indexierung
+## API Referenz
 
-**`POST /api/index`**
+### 🔍 Suche (Search)
 
-Startet den Indexierungsprozess für den gesamten konfigurierten Bucket im Hintergrund.
-Prüft existierende Bilder und überspringt diese (außer `force_reindex` ist aktiv).
+**`GET /api/search`**
+Einfache Textsuche, ideal für Browser-Tests.
+- `query`: Suchbegriff
+- `limit`: Anzahl (Default: 30)
+- `delta`: Filter (z.B. "0", ">0", "alle")
 
-**Benötigt Header:**
-`X-API-Key: <INDEX_API_KEY>`
-
-**Body (`json`):**
+**`POST /api/search`**
+Volle Suchfunktionalität inkl. Image-to-Image Suche.
 ```json
 {
-  "force_reindex": false
+  "query": "Ein Soldat in Uniform",
+  "similar": "referenz_bild.jpg",  // Optional: Ähnlichkeitssuche
+  "limit": 50,
+  "offset": 0
 }
+```
+
+### ⚙️ Indexierung (Upload/Index)
+
+**`POST /api/index`**
+Startet den Indexierungsprozess für den gesamten S3-Bucket im Hintergrund.
+*Header:* `X-API-Key: <INDEX_API_KEY>`
+```json
+{ "force_reindex": false }
 ```
 
 **`POST /api/index-one`**
+Indiziert oder aktualisiert ein spezifisches Bild sofort.
+```json
+{ "filename": "1234.jpg" }
+```
 
-Indiziert ein spezifisches Bild sofort.
+### 🔧 Wartung (Maintenance)
 
-**Body (`json`):**
+**`POST /api/update-payload`**
+Synchronisiert Metadaten (wie `nid`, `delta`) aus der MySQL-Datenbank in bestehende Qdrant-Vektoren.
 ```json
 {
-  "filename": "ordner/bild.jpg"
+  "all": true   // Aktualisiert alle Einträge (Background Task)
+  // ODER
+  "filename": "1234.jpg" // Aktualisiert nur einen Eintrag
 }
 ```
 
----
+**`GET /api/missing-in-qdrant`**
+Analyse-Tool: Vergleicht MySQL-Einträge mit dem Qdrant-Index und dem S3-Bucket.
+Zeigt an:
+- Bilder in DB, die in Qdrant fehlen (aber im Storage liegen -> bereit zum Indexieren).
+- Bilder in DB, die nirgends existieren (Dateileichen).
 
-### ❤️ Health Check
+### 🔐 Authentifizierung (Auth)
 
-**`GET /health`**
+Die API schützt statische HTML-Seiten (`/static/*.html`) via Session-Cookie.
 
-Prüft, ob der Service läuft.
+**`POST /auth/login`**
+Login gegen Tabelle `users`.
 ```json
-{ "status": "ok" }
+{ "username": "admin", "password": "..." }
 ```
+
+**`POST /auth/logout`**
+Löscht die Session.
+
+## Projektstruktur
+
+- `main.py`: Einstiegspunkt, Router-Konfiguration.
+- `auth.py`: Login-Logik, MySQL-User-Check.
+- `index.py`: Logik zum Indexieren von Bildern (S3 -> FastEmbed -> Qdrant).
+- `search.py`: Suchlogik (Text/Bild -> FastEmbed -> Qdrant Search).
+- `payload.py`: Synchronisation und Wartungstools.
