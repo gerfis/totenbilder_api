@@ -353,7 +353,7 @@
                 } else {
                     if (!confirm("Wirklich ALLES neu indexieren? Das kann dauern.")) return;
                     endpoint = '/index';
-                    body = { force_reindex: false };
+                    body = { force_reindex: true };
                 }
 
                 const res = await fetch(`${API_BASE}${endpoint}`, {
