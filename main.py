@@ -19,10 +19,6 @@ async def lifespan(app: FastAPI):
     # Da RAM sparen gewünscht ist, laden wir sie vielleicht besser lazy,
     # aber um "warm" zu sein, triggern wir es an.
     
-    print("Preloading Models...")
-    # Wir laden sie einfach einmal an, damit sie im RAM sind
-    # Das OS wird dank Torch Shared Memory nutzen wo möglich, 
-    # aber es sind 2 verschiedene Modelle.
     get_img_model()
     get_text_model()
     print("Models preloaded.")
