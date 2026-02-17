@@ -23,6 +23,17 @@ async def lifespan(app: FastAPI):
     # Wir laden sie einfach einmal an, damit sie im RAM sind
     # Das OS wird dank Torch Shared Memory nutzen wo möglich, 
     # aber es sind 2 verschiedene Modelle.
+    
+    # DEBUG: Configuration Check
+    import os
+    q_url = os.getenv("QDRANT_URL")
+    q_key = os.getenv("QDRANT_API_KEY")
+    masked_key = (q_key[:5] + "***") if q_key else "None"
+    print(f"--- SERVER STARTUP CONFIG CHECK ---")
+    print(f"QDRANT_URL: '{q_url}'")
+    print(f"QDRANT_API_KEY: {masked_key}")
+    print(f"-----------------------------------")
+
     get_img_model()
     get_text_model()
     print("Models preloaded.")
