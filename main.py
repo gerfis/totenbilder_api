@@ -32,6 +32,9 @@ async def lifespan(app: FastAPI):
     print(f"--- SERVER STARTUP CONFIG CHECK ---")
     print(f"QDRANT_URL: '{q_url}'")
     print(f"QDRANT_API_KEY: {masked_key}")
+    print(f"--- ALL ENVIRONMENT KEYS ---")
+    for k in sorted(os.environ.keys()):
+        print(f"  {k}")
     print(f"-----------------------------------")
 
     get_img_model()
