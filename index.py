@@ -1,13 +1,12 @@
 import os
 import uuid
 import torch
-import io
 import boto3
+import tempfile
 from dotenv import load_dotenv
-from PIL import Image
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Header, Depends, status
 from pydantic import BaseModel
-from sentence_transformers import SentenceTransformer
+from fastembed import ImageEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, VectorParams, Distance, Filter, FieldCondition, MatchValue
 
@@ -24,7 +23,7 @@ R2_PREFIX = os.getenv("R2_PREFIX")
 COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME")
 INDEX_API_KEY = os.getenv("INDEX_API_KEY")
 
-DEVICE = 'mps' if torch.backends.mps.is_available() else 'cpu'
+
 
 # Router definieren
 # Router definieren
@@ -54,8 +53,8 @@ _qdrant_client = None
 def get_model():
     global _model_img
     if _model_img is None:
-        print(f"Lade CLIP IMAGE Model auf {DEVICE}...")
-        _model_img = SentenceTransformer('clip-ViT-B-32', device=DEVICE)
+        print(f"Lade CLIP IMAGE Model (fastembed)...")
+        _model_img = ImageEmbedding(model_name="Qdrant/clip-ViT-B-32-vision")
     return _model_img
 
 def get_s3_client():
@@ -148,10 +147,22 @@ def process_indexing(force_reindex: bool = False):
                 # Bild aus R2 laden
                 file_obj = s3.get_object(Bucket=R2_BUCKET_NAME, Key=key)
                 file_content = file_obj['Body'].read()
-                img = Image.open(io.BytesIO(file_content))
                 
-                # Embedden
-                vector = model.encode(img).tolist()
+                # FastEmbed benötigt Datei-Pfad (oder Liste davon)
+                # Wir speichern temporär
+                file_ext = os.path.splitext(key)[1]
+                vector = []
+                
+                with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp:
+                    tmp.write(file_content)
+                    tmp_path = tmp.name
+                
+                try:
+                    # Embedden
+                    vector = list(model.embed([tmp_path]))[0].tolist()
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
                 
                 point = PointStruct(
                     id=str(uuid.uuid4()),
@@ -195,16 +206,28 @@ async def index_single_image(request: SingleIndexRequest):
         print(f"Indexiere einzelnes Bild: {key}...")
         
         # Bild aus R2 laden
+        # Bild aus R2 laden
         try:
             file_obj = s3.get_object(Bucket=R2_BUCKET_NAME, Key=key)
             file_content = file_obj['Body'].read()
-            img = Image.open(io.BytesIO(file_content))
+            
+            file_ext = os.path.splitext(key)[1]
+            vector = []
+            
+            with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp:
+                tmp.write(file_content)
+                tmp_path = tmp.name
+            
+            try:
+                # Embedden
+                vector = list(model.embed([tmp_path]))[0].tolist()
+            finally:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+                    
         except Exception as e:
-            print(f"Fehler beim Laden von {key}: {e}")
-            raise HTTPException(status_code=404, detail=f"Bild '{key}' konnte nicht geladen werden: {e}")
-        
-        # Embedden
-        vector = model.encode(img).tolist()
+            print(f"Fehler beim Laden/Embedden von {key}: {e}")
+            raise HTTPException(status_code=404, detail=f"Bild '{key}' konnte nicht verarbeitet werden: {e}")
         
         point = PointStruct(
             id=str(uuid.uuid4()),

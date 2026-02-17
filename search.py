@@ -4,10 +4,9 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
-import torch
 from deep_translator import GoogleTranslator
 
 load_dotenv()
@@ -18,7 +17,7 @@ QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME")
 PUBLIC_IMAGE_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
 
-DEVICE = 'mps' if torch.backends.mps.is_available() else 'cpu'
+
 
 router = APIRouter()
 
@@ -29,8 +28,8 @@ _qdrant_client = None
 def get_model():
     global _model_text
     if _model_text is None:
-        print(f"Lade CLIP TEXT Model (standard) auf {DEVICE}...")
-        _model_text = SentenceTransformer('clip-ViT-B-32', device=DEVICE)
+        print(f"Lade CLIP TEXT Model (fastembed)...")
+        _model_text = TextEmbedding(model_name="Qdrant/clip-ViT-B-32-text")
     return _model_text
 
 def get_qdrant_client():
@@ -116,7 +115,8 @@ async def search_images(search_req: SearchQuery):
             translated_query = search_req.query
 
         local_model = get_model()
-        text_vector = local_model.encode(translated_query).tolist()
+        # FastEmbed returns a generator of numpy arrays
+        text_vector = list(local_model.embed([translated_query]))[0].tolist()
         
         points = client.query_points(
             collection_name=COLLECTION_NAME,
