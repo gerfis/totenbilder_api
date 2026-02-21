@@ -345,13 +345,16 @@ async def index_single_image(request: SingleIndexRequest):
             conn = get_db_connection()
             if conn:
                 cursor = conn.cursor(dictionary=True)
-                # DB filename check (remove prefix)
-                db_filename = key.replace(R2_PREFIX, "")
-                cursor.execute("SELECT nid, delta FROM totenbilder_bilder WHERE filename = %s", (db_filename,))
+                # DB filename check (remove prefix AND keep prefix to match both legacy and new rows)
+                db_filename_stripped = key.replace(R2_PREFIX, "")
+                cursor.execute("SELECT nid, delta FROM totenbilder_bilder WHERE filename = %s OR filename = %s", (db_filename_stripped, key))
                 row = cursor.fetchone()
                 if row:
                     payload["nid"] = row['nid']
                     payload["delta"] = row['delta']
+                else:
+                    print(f"WARNUNG: Keine Metadaten für {key} (stripped: {db_filename_stripped}) in totenbilder_bilder gefunden!")
+                    
                 cursor.close()
                 conn.close()
         except Exception as e:
