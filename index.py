@@ -389,3 +389,78 @@ async def trigger_indexing(request: IndexRequest, background_tasks: BackgroundTa
     """
     background_tasks.add_task(process_indexing, request.force_reindex, request.recreate_collection)
     return {"message": "Indexierung wurde im Hintergrund gestartet.", "bucket": R2_BUCKET_NAME, "recreate": request.recreate_collection}
+
+
+class DeleteByNidRequest(BaseModel):
+    nid: int
+
+@router.post("/delete-by-nid", dependencies=[Depends(verify_index_key)])
+async def delete_by_nid(request: DeleteByNidRequest):
+    """
+    Löscht alle Vektoren aus Qdrant, die zu einer bestimmten NID (Person) gehören.
+    """
+    qdrant = get_qdrant_client()
+    if not qdrant:
+        raise HTTPException(status_code=500, detail="Qdrant Client nicht verfügbar.")
+
+    try:
+        print(f"Lösche alle Vektoren für NID {request.nid} aus Qdrant...")
+        
+        # Wir löschen alle Punkte, deren NID-Feld in der Payload übereinstimmt
+        operation_info = qdrant.delete(
+            collection_name=COLLECTION_NAME,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(
+                        key="nid",
+                        match=MatchValue(value=request.nid)
+                    )
+                ]
+            ),
+        )
+
+        return {"message": f"Vektoren für NID {request.nid} erfolgreich gelöscht.", "status": operation_info.status}
+    except Exception as e:
+        print(f"Fehler beim Löschen für NID {request.nid}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class DeleteByFilenameRequest(BaseModel):
+    filename: str
+
+@router.post("/delete-one", dependencies=[Depends(verify_index_key)])
+async def delete_single_image(request: DeleteByFilenameRequest):
+    """
+    Löscht einen einzelnen Vektor anhand des Dateinamens aus Qdrant.
+    """
+    key = request.filename
+    qdrant = get_qdrant_client()
+    if not qdrant:
+        raise HTTPException(status_code=500, detail="Qdrant Client nicht verfügbar.")
+
+    try:
+        print(f"Lösche Vektor für Bild {key} aus Qdrant...")
+        
+        # Da wir eine deterministische UUID für den Dateinamen vergeben haben
+        # beim Indexieren, können wir sie auch wieder neu berechnen.
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
+        
+        # Alternativ über Payload Filter löschen (sicherer falls der ID-Algorithmus gewechselt wurde)
+        operation_info = qdrant.delete(
+            collection_name=COLLECTION_NAME,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(
+                        key="filename",
+                        match=MatchValue(value=key)
+                    )
+                ]
+            ),
+        )
+        
+        return {"message": f"Bild '{key}' erfolgreich aus Qdrant gelöscht.", "status": operation_info.status}
+
+    except Exception as e:
+        print(f"Fehler beim Löschen vom Bild {key}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
