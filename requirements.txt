@@ -8,3 +8,4 @@ python-dotenv
 mysql-connector-python
 deep-translator
 bcrypt
+sentence-transformers

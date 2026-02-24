@@ -23,6 +23,7 @@ router = APIRouter()
 
 # Globale Variablen (Modul-Level)
 _model_text = None
+_model_minilm = None
 _qdrant_client = None
 
 def get_model():
@@ -31,6 +32,13 @@ def get_model():
         print(f"Lade CLIP TEXT Model (fastembed)...")
         _model_text = TextEmbedding(model_name="Qdrant/clip-ViT-B-32-text")
     return _model_text
+
+def get_minilm_model():
+    global _model_minilm
+    if _model_minilm is None:
+        print(f"Lade MiniLM TEXT Model (fastembed)...")
+        _model_minilm = TextEmbedding(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+    return _model_minilm
 
 def get_qdrant_client():
     global _qdrant_client
@@ -44,6 +52,7 @@ class SearchQuery(BaseModel):
     limit: int = 30
     offset: int = 0
     delta: Optional[str] = "alle"
+    type: str = "image" # "image" (CLIP) oder "text" (MiniLM)
 
 class SearchResult(BaseModel):
     filename: str
@@ -106,28 +115,49 @@ async def search_images(search_req: SearchQuery):
              raise HTTPException(status_code=404, detail=f"Bild '{search_req.similar}' nicht gefunden.")
 
     elif search_req.query:
-        # Übersetzung von Deutsch nach Englisch für bessere Suchergebnisse in CLIP
-        try:
-            translated_query = GoogleTranslator(source='auto', target='en').translate(search_req.query)
-            print(f"Suche nach: '{search_req.query}' -> Übersetzung: '{translated_query}'")
-        except Exception as e:
-            print(f"Übersetzungsfehler: {e}")
-            translated_query = search_req.query
-
-        local_model = get_model()
-        # FastEmbed returns a generator of numpy arrays
-        text_vector = list(local_model.embed([translated_query]))[0].tolist()
-        
-        points = client.query_points(
-            collection_name=COLLECTION_NAME,
-            query=text_vector,
-            query_filter=Filter(must=filter_conditions) if filter_conditions else None,
-            limit=search_req.limit,
-            offset=search_req.offset
-        ).points
-        
-        for hit in points:
-            results.append(create_result(hit))
+        if search_req.type == "text":
+            # REINE TEXT-SUCHE (über MiniLM)
+            print(f"Suche nach Text (MiniLM): '{search_req.query}'")
+            local_model = get_minilm_model()
+            text_vector = list(local_model.embed([search_req.query]))[0].tolist()
+            
+            points = client.query_points(
+                collection_name=COLLECTION_NAME,
+                query=text_vector,
+                using="text",
+                query_filter=Filter(must=filter_conditions) if filter_conditions else None,
+                limit=search_req.limit,
+                offset=search_req.offset
+            ).points
+            
+            for hit in points:
+                results.append(create_result(hit))
+                
+        else:
+            # TEXT-ZU-BILD SUCHE (über CLIP)
+            # Übersetzung von Deutsch nach Englisch für bessere Suchergebnisse in CLIP
+            try:
+                translated_query = GoogleTranslator(source='auto', target='en').translate(search_req.query)
+                print(f"Suche nach Bildinhalten (CLIP): '{search_req.query}' -> Übersetzung: '{translated_query}'")
+            except Exception as e:
+                print(f"Übersetzungsfehler: {e}")
+                translated_query = search_req.query
+    
+            local_model = get_model()
+            # FastEmbed returns a generator of numpy arrays
+            text_vector = list(local_model.embed([translated_query]))[0].tolist()
+            
+            # Bei CLIP greifen wir auf den unbenannten Vektor zu (default)
+            points = client.query_points(
+                collection_name=COLLECTION_NAME,
+                query=text_vector,
+                query_filter=Filter(must=filter_conditions) if filter_conditions else None,
+                limit=search_req.limit,
+                offset=search_req.offset
+            ).points
+            
+            for hit in points:
+                results.append(create_result(hit))
     else:
         # Leere Suche = Fehler oder leere Liste? Hier leere Liste.
         return []
@@ -135,11 +165,11 @@ async def search_images(search_req: SearchQuery):
     return results
 
 @router.get("/search", response_model=List[SearchResult])
-async def search_images_get(query: str, limit: int = 30, offset: int = 0, delta: str = "alle"):
+async def search_images_get(query: str, limit: int = 30, offset: int = 0, delta: str = "alle", type: str = "image"):
     """
-    Ermöglicht die Text-Suche per GET-Request (z.B. für Browser-Tests).
+    Ermöglicht die Text-Suche per GET-Request.
     """
-    return await search_images(SearchQuery(query=query, limit=limit, offset=offset, delta=delta))
+    return await search_images(SearchQuery(query=query, limit=limit, offset=offset, delta=delta, type=type))
 
 def create_result(hit):
     fname_key = hit.payload.get("filename")

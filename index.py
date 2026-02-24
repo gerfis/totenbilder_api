@@ -6,9 +6,9 @@ import tempfile
 from dotenv import load_dotenv
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Header, Depends, status
 from pydantic import BaseModel
-from fastembed import ImageEmbedding
+from fastembed import ImageEmbedding, TextEmbedding
 from qdrant_client import QdrantClient
-from qdrant_client.models import PointStruct, VectorParams, Distance, Filter, FieldCondition, MatchValue
+from qdrant_client.models import PointStruct, VectorParams, Distance, Filter, FieldCondition, MatchValue, PointVectors
 import mysql.connector
 import hashlib
 
@@ -53,15 +53,22 @@ async def verify_index_key(x_api_key: str = Header(..., description="API Key fü
 
 # Globale Variablen für Modul-Level Caching (Optional, wird hier lazy geladen)
 _model_img = None
+_model_txt = None
 _s3_client = None
 _qdrant_client = None
-
 def get_model():
     global _model_img
     if _model_img is None:
         print(f"Lade CLIP IMAGE Model (fastembed)...")
         _model_img = ImageEmbedding(model_name="Qdrant/clip-ViT-B-32-vision")
     return _model_img
+
+def get_text_model():
+    global _model_txt
+    if _model_txt is None:
+        print(f"Lade MiniLM TEXT Model (fastembed)...")
+        _model_txt = TextEmbedding(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+    return _model_txt
 
 def get_s3_client():
     global _s3_client
@@ -113,8 +120,8 @@ def get_db_connection():
 
 def fetch_all_metadata():
     """
-    Fetches all NID and Delta values from MySQL and returns a dict:
-    { "filename": {"nid": 123, "delta": 0}, ... }
+    Fetches all NID, Delta and Fulltext values from MySQL and returns a dict:
+    { "filename": {"nid": 123, "delta": 0, "fulltext": "..." }, ... }
     """
     print("Fetching metadata from MySQL...")
     conn = get_db_connection()
@@ -124,10 +131,15 @@ def fetch_all_metadata():
     metadata_map = {}
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT filename, nid, delta FROM totenbilder_bilder")
+        # JOIN table "totenbilder" to get Fulltext
+        cursor.execute("SELECT b.filename, b.nid, b.delta, t.Fulltext FROM totenbilder_bilder b LEFT JOIN totenbilder t ON b.nid = t.nid")
         results = cursor.fetchall()
         for row in results:
-            metadata_map[row['filename']] = {"nid": row['nid'], "delta": row['delta']}
+            metadata_map[row['filename']] = {
+                "nid": row['nid'], 
+                "delta": row['delta'],
+                "fulltext": row['Fulltext']
+            }
         print(f"Loaded metadata for {len(metadata_map)} images.")
     except Exception as e:
         print(f"Error fetching metadata: {e}")
@@ -144,9 +156,10 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
     """
     s3 = get_s3_client()
     qdrant = get_qdrant_client()
-    model = get_model()
+    model_img = get_model()
+    model_txt = get_text_model()
 
-    if not s3 or not qdrant or not model:
+    if not s3 or not qdrant or not model_img or not model_txt:
         print("Fehler: Clients konnten nicht initialisiert werden.")
         return
 
@@ -158,7 +171,10 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
         print(f"!!! ACHTUNG: Lösche und erstelle Collection '{COLLECTION_NAME}' neu...")
         qdrant.recreate_collection(
             collection_name=COLLECTION_NAME,
-            vectors_config=VectorParams(size=512, distance=Distance.COSINE),
+            vectors_config={
+                "": VectorParams(size=512, distance=Distance.COSINE),
+                "text": VectorParams(size=384, distance=Distance.COSINE)
+            },
         )
         # Payload Index sofort wieder anlegen
         qdrant.create_payload_index(
@@ -231,44 +247,42 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
                     tmp_path = tmp.name
                 
                 try:
-                    # Embedden
-                    vector = list(model.embed([tmp_path]))[0].tolist()
+                    # Embedden Image
+                    img_vector = list(model_img.embed([tmp_path]))[0].tolist()
                 finally:
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
                 
                 # Deterministic UUID generation
-                # Using UUID5 with DNS namespace + unique key (filename) ensures 
-                # same filename always gets same UUID.
                 point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
 
                 # Payload zusammenbauen
                 payload = {"filename": key}
-                
-                # Metadata aus MySQL mergen
-                # Wir entfernen den Prefix "totenbilder/" aus dem Key für den DB-Lookup falls nötig?
-                # In update_payload.py war full_key = prefix + filename. 
-                # In DB steht nur "filename" (z.B. "123.jpg") oder mit pfad?
-                # Check update_payload.py Zeile 93: "WHERE filename = %s".
-                # Wenn in DB nur "123.jpg" steht, aber key "totenbilder/123.jpg" ist...
-                # Wir sollten beides probieren oder annehmen es passt.
-                # In update_payload.py Zeile 53 wird full_key gebaut. Also DB hat wohl nur den Dateinamen ohne Prefix?
-                # Nein, warte: process_single(filename) nimmt filename als Argument.
-                # process_all holt filename aus DB.
-                # update_qdrant_point baut full_key = R2_PREFIX + filename.
-                # Das impliziert: DB hat "123.jpg", Qdrant/R2 hat "totenbilder/123.jpg".
-                # Also müssen wir den Prefix abschneiden für den Lookup.
-                
                 db_filename = key.replace(R2_PREFIX, "")
-                # Fallback: Falls R2_PREFIX nicht leer ist und key damit anfängt
                 
+                # Check for Text Embedding based on delta
+                text_vector = None
                 if db_filename in metadata_map:
                     payload["nid"] = metadata_map[db_filename]["nid"]
                     payload["delta"] = metadata_map[db_filename]["delta"]
+                    
+                    if payload["delta"] == 0 and metadata_map[db_filename]["fulltext"]:
+                        try:
+                            text_vector = list(model_txt.embed([metadata_map[db_filename]["fulltext"]]))[0].tolist()
+                        except Exception as text_e:
+                            print(f"WARNUNG: Text Embedding fehlgeschlagen für {db_filename}: {text_e}")
+                
+                # Vector dict with named vectors
+                vector_payload = img_vector # fallback
+                if text_vector:
+                    vector_payload = {
+                        "": img_vector,
+                        "text": text_vector
+                    }
                 
                 point = PointStruct(
                     id=point_id,
-                    vector=vector,
+                    vector=vector_payload,
                     payload=payload
                 )
                 points_buffer.append(point)
@@ -298,10 +312,12 @@ async def index_single_image(request: SingleIndexRequest):
     """
     key = request.filename
     s3 = get_s3_client()
+    s3 = get_s3_client()
     qdrant = get_qdrant_client()
-    model = get_model()
+    model_img = get_model()
+    model_txt = get_text_model()
 
-    if not s3 or not qdrant or not model:
+    if not s3 or not qdrant or not model_img or not model_txt:
         raise HTTPException(status_code=500, detail="Interne Services nicht verfügbar.")
 
     try:
@@ -321,8 +337,8 @@ async def index_single_image(request: SingleIndexRequest):
                 tmp_path = tmp.name
             
             try:
-                # Embedden
-                vector = list(model.embed([tmp_path]))[0].tolist()
+                # Embedden Image
+                img_vector = list(model_img.embed([tmp_path]))[0].tolist()
             finally:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
@@ -336,33 +352,46 @@ async def index_single_image(request: SingleIndexRequest):
 
         payload = {"filename": key}
         
-        # Metadata fetch (Quick & Dirty: Einfach DB fragen für dieses eine File)
-        # Oder wir nutzen fetch_all_metadata() nicht, sondern eine kleine Helper funktion?
-        # Egal, wir machen es inline oder nutzen eine neue Helper funktion?
-        # Da wir schon get_db_connection haben:
-        
+        # Metadata fetch
+        text_vector = None
         try:
             conn = get_db_connection()
             if conn:
                 cursor = conn.cursor(dictionary=True)
-                # DB filename check (remove prefix AND keep prefix to match both legacy and new rows)
                 db_filename_stripped = key.replace(R2_PREFIX, "")
-                cursor.execute("SELECT nid, delta FROM totenbilder_bilder WHERE filename = %s OR filename = %s", (db_filename_stripped, key))
+                cursor.execute(
+                    "SELECT b.nid, b.delta, t.Fulltext FROM totenbilder_bilder b LEFT JOIN totenbilder t ON b.nid=t.nid WHERE b.filename = %s OR b.filename = %s", 
+                    (db_filename_stripped, key)
+                )
                 row = cursor.fetchone()
                 if row:
                     payload["nid"] = row['nid']
                     payload["delta"] = row['delta']
+                    
+                    if payload["delta"] == 0 and row['Fulltext']:
+                        try:
+                            text_vector = list(model_txt.embed([row['Fulltext']]))[0].tolist()
+                        except Exception as text_e:
+                            print(f"WARNUNG: Text Embedding fehlgeschlagen für {key}: {text_e}")
                 else:
-                    print(f"WARNUNG: Keine Metadaten für {key} (stripped: {db_filename_stripped}) in totenbilder_bilder gefunden!")
+                    print(f"WARNUNG: Keine Metadaten für {key} gefunden!")
                     
                 cursor.close()
                 conn.close()
         except Exception as e:
             print(f"Error fetching metadata for single image: {e}")
 
+        # Vector dict with named vectors
+        vector_payload = img_vector # fallback
+        if text_vector:
+            vector_payload = {
+                "": img_vector,
+                "text": text_vector
+            }
+
         point = PointStruct(
             id=point_id,
-            vector=vector,
+            vector=vector_payload,
             payload=payload
         )
         
@@ -389,6 +418,75 @@ async def trigger_indexing(request: IndexRequest, background_tasks: BackgroundTa
     """
     background_tasks.add_task(process_indexing, request.force_reindex, request.recreate_collection)
     return {"message": "Indexierung wurde im Hintergrund gestartet.", "bucket": R2_BUCKET_NAME, "recreate": request.recreate_collection}
+
+class UpdateTextRequest(BaseModel):
+    filename: str
+
+@router.post("/update-text-one", dependencies=[Depends(verify_index_key)])
+async def update_single_text(request: UpdateTextRequest):
+    """
+    Indiziert den Textvektor eines Bildes (nur bei delta=0). Der Hauptvektor bleibt unberührt.
+    """
+    key = request.filename
+    qdrant = get_qdrant_client()
+    model_txt = get_text_model()
+
+    if not qdrant or not model_txt:
+        raise HTTPException(status_code=500, detail="Interne Services nicht verfügbar.")
+
+    try:
+        print(f"Update Textvektor für: {key}...")
+        
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
+        
+        # Metadata fetch
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="DB Error")
+            
+        cursor = conn.cursor(dictionary=True)
+        db_filename_stripped = key.replace(R2_PREFIX, "")
+        cursor.execute(
+            "SELECT b.delta, t.Fulltext FROM totenbilder_bilder b LEFT JOIN totenbilder t ON b.nid=t.nid WHERE b.filename = %s OR b.filename = %s", 
+            (db_filename_stripped, key)
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Eintrag in DB nicht gefunden.")
+            
+        if row['delta'] != 0:
+            return {"message": f"Übersprungen: {key} ist eine Rückseite (delta>0).", "filename": key}
+            
+        fulltext = row['Fulltext']
+        if not fulltext:
+            return {"message": f"Übersprungen: {key} hat keinen Fulltext.", "filename": key}
+
+        # Embedden
+        text_vector = list(model_txt.embed([fulltext]))[0].tolist()
+        
+        # update_vectors
+        qdrant.update_vectors(
+            collection_name=COLLECTION_NAME,
+            points=[
+                PointVectors(
+                    id=point_id,
+                    vector={
+                        "text": text_vector
+                    }
+                )
+            ]
+        )
+        
+        return {"message": f"Textvektor für '{key}' erfolgreich aktualisiert.", "filename": key}
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"Fehler bei {key}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 class DeleteByNidRequest(BaseModel):
