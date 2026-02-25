@@ -264,7 +264,8 @@
 
                 <div style="display: flex; gap: 10px;">
                     <button class="btn btn-primary" onclick="triggerTextIndex('single')">Einzeln Aktualisieren</button>
-                    <button class="btn btn-secondary" style="margin-top: 0;" onclick="triggerTextIndex('all')">Alle Aktualisieren</button>
+                    <button class="btn btn-secondary" style="margin-top: 0;" onclick="triggerTextIndex('all')">Alle
+                        Aktualisieren</button>
                 </div>
                 <div id="text-index-log" class="log-output">Bereit...</div>
             </div>
@@ -426,14 +427,18 @@
                 } else {
                     if (!confirm("Wirklich Textvektoren für ALLE Bilder neu indexieren? Das kann dauern.")) return;
                     endpoint = '/update-text-all';
-                    body = {};
+                    body = null; // Backend expects no body for this POST request
                 }
 
-                const res = await fetch(`${API_BASE}${endpoint}`, {
+                const options = {
                     method: 'POST',
-                    headers: headers,
-                    body: JSON.stringify(body)
-                });
+                    headers: headers
+                };
+                if (body) {
+                    options.body = JSON.stringify(body);
+                }
+
+                const res = await fetch(`${API_BASE}${endpoint}`, options);
 
                 const data = await res.json();
 
