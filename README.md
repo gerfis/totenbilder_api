@@ -69,15 +69,18 @@ Einfache Textsuche, ideal für Browser-Tests.
 - `query`: Suchbegriff
 - `limit`: Anzahl (Default: 30)
 - `delta`: Filter (z.B. "0", ">0", "alle")
+- `type`: Such-Modus (`"image"` für visuelle Suche im Bild, `"text"` für OCR-Volltextsuche) (Default: `"image"`)
 
 **`POST /api/search`**
-Volle Suchfunktionalität inkl. Image-to-Image Suche.
+Volle Suchfunktionalität inkl. Image-to-Image Suche und expliziter Textsuche.
 ```json
 {
   "query": "Ein Soldat in Uniform",
-  "similar": "referenz_bild.jpg",  // Optional: Ähnlichkeitssuche
+  "type": "image",                 // Optional: "image" oder "text"
+  "similar": "referenz_bild.jpg",  // Optional: Ähnlichkeitssuche anstatt Text-Query
   "limit": 50,
-  "offset": 0
+  "offset": 0,
+  "delta": "alle"                  // Optional: "alle", "0", ">0"
 }
 ```
 
