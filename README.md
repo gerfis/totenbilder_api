@@ -106,6 +106,13 @@ Indiziert den Textvektor eines Bildes neu (nur bei `delta=0`). Der Bild-Hauptvek
 { "filename": "1234.jpg" }
 ```
 
+**`POST /api/update-text-all`**
+Aktualisiert alle Textvektoren für Bilder mit `delta=0` im Hintergrund. Holt die Volltexte aus der MySQL-Datenbank und speichert die neuen Vektoren in Qdrant.
+*Header:* `X-API-Key: <INDEX_API_KEY>`
+```json
+{}
+```
+
 ### 🗑️ Löschen (Delete)
 
 **`POST /api/delete-by-nid`**

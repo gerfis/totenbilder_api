@@ -251,6 +251,24 @@
                 <div id="index-log" class="log-output">Bereit...</div>
             </div>
 
+            <!-- Card 1.5: Text Indexing -->
+            <div class="card">
+                <div class="card-header">
+                    <h2><span class="section-icon">📝</span> Text Indexierung</h2>
+                </div>
+                <p style="margin-bottom: 15px; font-size: 0.9rem; color: #ccc;">
+                    Volltexte in Qdrant Vektor-Datenbank für Bilder mit delta=0 aktualisieren.
+                </p>
+
+                <input type="text" id="text-index-filename" placeholder="Einzelne Datei (optional, z.B. img.jpg)">
+
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn btn-primary" onclick="triggerTextIndex('single')">Einzeln Aktualisieren</button>
+                    <button class="btn btn-secondary" style="margin-top: 0;" onclick="triggerTextIndex('all')">Alle Aktualisieren</button>
+                </div>
+                <div id="text-index-log" class="log-output">Bereit...</div>
+            </div>
+
             <!-- Card 2: Payload Update -->
             <div class="card">
                 <div class="card-header">
@@ -361,6 +379,54 @@
                     if (!confirm("Wirklich ALLES neu indexieren? Das kann dauern.")) return;
                     endpoint = '/index';
                     body = { force_reindex: true, recreate_collection: false };
+                }
+
+                const res = await fetch(`${API_BASE}${endpoint}`, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify(body)
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    log(logId, `Erfolg: ${JSON.stringify(data)}`, 'success');
+                } else {
+                    log(logId, `Fehler: ${data.detail || 'Unbekannt'}`, 'error');
+                }
+
+            } catch (e) {
+                log(logId, `Netzwerkfehler: ${e.message}`, 'error');
+            }
+        }
+
+        // --- Text Indexing Logic ---
+        async function triggerTextIndex(type) {
+            const filename = document.getElementById('text-index-filename').value;
+            const logId = 'text-index-log';
+
+            const headers = {
+                'Content-Type': 'application/json',
+                'x-api-key': 'zawos123'
+            };
+
+            try {
+                log(logId, 'Starte Anfrage...', 'info');
+
+                let endpoint = '';
+                let body = {};
+
+                if (type === 'single') {
+                    if (!filename) {
+                        alert("Bitte Dateinamen eingeben!");
+                        return;
+                    }
+                    endpoint = '/update-text-one';
+                    body = { filename: filename };
+                } else {
+                    if (!confirm("Wirklich Textvektoren für ALLE Bilder neu indexieren? Das kann dauern.")) return;
+                    endpoint = '/update-text-all';
+                    body = {};
                 }
 
                 const res = await fetch(`${API_BASE}${endpoint}`, {

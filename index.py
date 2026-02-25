@@ -488,6 +488,81 @@ async def update_single_text(request: UpdateTextRequest):
         print(f"Fehler bei {key}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+def process_update_all_text():
+    qdrant = get_qdrant_client()
+    model_txt = get_text_model()
+    
+    if not qdrant or not model_txt:
+        print("Fehler: Clients nicht verfügbar")
+        return
+        
+    print("Starte Update aller Textvektoren...")
+    
+    metadata_map = fetch_all_metadata()
+    count_success = 0
+    count_skipped = 0
+    count_error = 0
+    
+    offset = None
+    while True:
+        points, next_offset = qdrant.scroll(
+            collection_name=COLLECTION_NAME,
+            with_payload=["filename", "delta"],
+            with_vectors=False,
+            limit=500,
+            offset=offset
+        )
+        
+        for point in points:
+            filename = point.payload.get("filename")
+            delta = point.payload.get("delta", 0)
+            
+            if not filename or delta != 0:
+                count_skipped += 1
+                continue
+                
+            db_filename = filename.replace(R2_PREFIX, "")
+            
+            if db_filename in metadata_map:
+                fulltext = metadata_map[db_filename]["fulltext"]
+                if fulltext:
+                    try:
+                        text_vector = list(model_txt.embed([fulltext]))[0].tolist()
+                        qdrant.update_vectors(
+                            collection_name=COLLECTION_NAME,
+                            points=[
+                                PointVectors(
+                                    id=point.id,
+                                    vector={
+                                        "text": text_vector
+                                    }
+                                )
+                            ]
+                        )
+                        count_success += 1
+                        if count_success % 50 == 0:
+                            print(f"{count_success} Textvektoren aktualisiert...")
+                    except Exception as e:
+                        print(f"Fehler bei {filename}: {e}")
+                        count_error += 1
+                else:
+                    count_skipped += 1
+            else:
+                count_skipped += 1
+                
+        offset = next_offset
+        if offset is None:
+            break
+            
+    print(f"Text Update abgeschlossen! Erfolgreich: {count_success}, Übersprungen: {count_skipped}, Fehler: {count_error}")
+
+@router.post("/update-text-all", dependencies=[Depends(verify_index_key)])
+async def update_all_text(background_tasks: BackgroundTasks):
+    """
+    Aktualisiert alle Textvektoren für Bilder mit delta=0 im Hintergrund.
+    """
+    background_tasks.add_task(process_update_all_text)
+    return {"message": "Update aller Textvektoren wurde im Hintergrund gestartet."}
 
 class DeleteByNidRequest(BaseModel):
     nid: int
