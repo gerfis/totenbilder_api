@@ -14,7 +14,8 @@ load_dotenv()
 # --- KONFIGURATION ---
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY") 
-COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME")
+COLLECTION_IMAGES = os.getenv("QDRANT_COLLECTION_IMAGES", "totenbilder_v2")
+COLLECTION_TEXTS = os.getenv("QDRANT_COLLECTION_TEXTS", "totenbilder_texte")
 PUBLIC_IMAGE_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
 
 
@@ -60,6 +61,8 @@ class SearchResult(BaseModel):
     score: float
     nid: Optional[int] = None
     delta: Optional[int] = None
+    field_type: Optional[str] = None
+    text_content: Optional[str] = None
 
 @router.post("/search", response_model=List[SearchResult])
 async def search_images(search_req: SearchQuery):
@@ -81,17 +84,14 @@ async def search_images(search_req: SearchQuery):
          filter_conditions.append(FieldCondition(key="delta", range=Range(gt=0)))
 
     if search_req.similar:
-
-        
         # 1. Vektor des Referenzbildes holen
         # Anm.: Wir filtern NICHT beim Holen des Referenzbildes, sondern beim Suchen der Ähnlichen.
         # Das Referenzbild selbst suchen wir nur per filename.
         ref_points = client.scroll(
-            collection_name=COLLECTION_NAME,
+            collection_name=COLLECTION_IMAGES,
             scroll_filter=Filter(
                 must=[FieldCondition(key="filename", match=MatchValue(value=search_req.similar))]
             ),
-
             limit=1,
             with_vectors=True
         )
@@ -101,11 +101,10 @@ async def search_images(search_req: SearchQuery):
             
             # 2. Ähnliche suchen
             points = client.query_points(
-                collection_name=COLLECTION_NAME,
+                collection_name=COLLECTION_IMAGES,
                 query=ref_vector,
                 query_filter=Filter(must=filter_conditions) if filter_conditions else None,
                 limit=search_req.limit,
-
                 offset=search_req.offset
             ).points
             
@@ -122,16 +121,22 @@ async def search_images(search_req: SearchQuery):
             text_vector = list(local_model.embed([search_req.query]))[0].tolist()
             
             points = client.query_points(
-                collection_name=COLLECTION_NAME,
+                collection_name=COLLECTION_TEXTS,
                 query=text_vector,
-                using="text",
                 query_filter=Filter(must=filter_conditions) if filter_conditions else None,
-                limit=search_req.limit,
+                limit=search_req.limit * 5, # Hole mehr Treffer für saubere Deduplizierung
                 offset=search_req.offset
             ).points
             
+            seen_identifiers = set()
             for hit in points:
-                results.append(create_result(hit))
+                # Dedupliziere primär über nid, fallback filename
+                identifier = hit.payload.get("nid") or hit.payload.get("filename")
+                if identifier and identifier not in seen_identifiers:
+                    seen_identifiers.add(identifier)
+                    results.append(create_result(hit))
+                    if len(results) >= search_req.limit:
+                        break
                 
         else:
             # TEXT-ZU-BILD SUCHE (über CLIP)
@@ -149,7 +154,7 @@ async def search_images(search_req: SearchQuery):
             
             # Bei CLIP greifen wir auf den unbenannten Vektor zu (default)
             points = client.query_points(
-                collection_name=COLLECTION_NAME,
+                collection_name=COLLECTION_IMAGES,
                 query=text_vector,
                 query_filter=Filter(must=filter_conditions) if filter_conditions else None,
                 limit=search_req.limit,
@@ -175,6 +180,8 @@ def create_result(hit):
     fname_key = hit.payload.get("filename")
     nid = hit.payload.get("nid")
     delta = hit.payload.get("delta")
+    field_type = hit.payload.get("field_type")
+    text_content = hit.payload.get("text_content")
     score = round(hit.score, 3)
     
     # URL Konstruktion
@@ -186,5 +193,7 @@ def create_result(hit):
         image_url=image_url,
         score=score,
         nid=nid,
-        delta=delta
+        delta=delta,
+        field_type=field_type,
+        text_content=text_content
     )

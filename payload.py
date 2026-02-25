@@ -16,7 +16,8 @@ DB_NAME = os.getenv("DB_NAME")
 
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY") 
-QDRANT_COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME")
+COLLECTION_IMAGES = os.getenv("QDRANT_COLLECTION_IMAGES", "totenbilder_v2")
+COLLECTION_TEXTS = os.getenv("QDRANT_COLLECTION_TEXTS", "totenbilder_texte")
 R2_PREFIX = os.getenv("R2_PREFIX", "totenbilder/")
 
 router = APIRouter()
@@ -56,32 +57,46 @@ def update_qdrant_point(qdrant_client, filename, nid, delta):
     full_key = f"{R2_PREFIX}{filename}"
     
     try:
-        # Search for the point by filename in payload
-        # Note: We are scrolling to find the point ID by the payload field 'filename'
-        points, _ = qdrant_client.scroll(
-            collection_name=QDRANT_COLLECTION_NAME,
+        # 1. Update Image Collection
+        img_points, _ = qdrant_client.scroll(
+            collection_name=COLLECTION_IMAGES,
             scroll_filter=Filter(
                 must=[FieldCondition(key="filename", match=MatchValue(value=full_key))]
             ),
             limit=1,
-            with_payload=True,
+            with_payload=False,
             with_vectors=False
         )
         
-        if not points:
+        if img_points:
+            qdrant_client.set_payload(
+                collection_name=COLLECTION_IMAGES,
+                points=[img_points[0].id],
+                payload={"nid": nid, "delta": delta}
+            )
+            
+        # 2. Update Texts Collection
+        text_points, _ = qdrant_client.scroll(
+            collection_name=COLLECTION_TEXTS,
+            scroll_filter=Filter(
+                must=[FieldCondition(key="filename", match=MatchValue(value=full_key))]
+            ),
+            limit=100, # Ein Bild kann mehrere Chunk-Vektoren haben
+            with_payload=False,
+            with_vectors=False
+        )
+        
+        if text_points:
+            text_ids = [p.id for p in text_points]
+            qdrant_client.set_payload(
+                collection_name=COLLECTION_TEXTS,
+                points=text_ids,
+                payload={"nid": nid, "delta": delta}
+            )
+            
+        if not img_points and not text_points:
             return False, f"Vector not found for key '{full_key}'"
             
-        point_id = points[0].id
-        
-        # Update payload
-        qdrant_client.set_payload(
-            collection_name=QDRANT_COLLECTION_NAME,
-            points=[point_id],
-            payload={
-                "nid": nid,
-                "delta": delta
-            }
-        )
         return True, "Success"
         
     except Exception as e:
@@ -234,7 +249,7 @@ def check_missing_in_qdrant():
         offset = None
         while True:
             points, next_offset = qdrant.scroll(
-                collection_name=QDRANT_COLLECTION_NAME,
+                collection_name=COLLECTION_IMAGES,
                 with_payload=["filename"],
                 with_vectors=False,
                 limit=1000,

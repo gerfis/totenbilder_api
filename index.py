@@ -22,7 +22,8 @@ R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID")
 R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY")
 R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
 R2_PREFIX = os.getenv("R2_PREFIX")
-COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME")
+COLLECTION_IMAGES = os.getenv("QDRANT_COLLECTION_IMAGES", "totenbilder_v2")
+COLLECTION_TEXTS = os.getenv("QDRANT_COLLECTION_TEXTS", "totenbilder_texte")
 INDEX_API_KEY = os.getenv("INDEX_API_KEY")
 DB_HOST = os.getenv("DB_HOST")
 DB_USER = os.getenv("DB_USER")
@@ -89,18 +90,28 @@ def get_qdrant_client():
     global _qdrant_client
     if _qdrant_client is None:
         _qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
-        if not _qdrant_client.collection_exists(COLLECTION_NAME):
+        
+        # Init Images Collection
+        if not _qdrant_client.collection_exists(COLLECTION_IMAGES):
             _qdrant_client.create_collection(
-                collection_name=COLLECTION_NAME,
+                collection_name=COLLECTION_IMAGES,
                 vectors_config=VectorParams(size=512, distance=Distance.COSINE),
             )
-        # Payload Index sicherstellen
-        try:
-            _qdrant_client.create_payload_index(
-                collection_name=COLLECTION_NAME,
-                field_name="filename",
-                field_schema="keyword",
+        # Init Texts Collection
+        if not _qdrant_client.collection_exists(COLLECTION_TEXTS):
+            _qdrant_client.create_collection(
+                collection_name=COLLECTION_TEXTS,
+                vectors_config=VectorParams(size=384, distance=Distance.COSINE),
             )
+            
+        # Payload Indices sicherstellen
+        try:
+            for coll in [COLLECTION_IMAGES, COLLECTION_TEXTS]:
+                _qdrant_client.create_payload_index(collection_name=coll, field_name="filename", field_schema="keyword")
+                _qdrant_client.create_payload_index(collection_name=coll, field_name="nid", field_schema="integer")
+                _qdrant_client.create_payload_index(collection_name=coll, field_name="delta", field_schema="integer")
+            # Text collection needs field_type index too
+            _qdrant_client.create_payload_index(collection_name=COLLECTION_TEXTS, field_name="field_type", field_schema="keyword")
         except:
             pass # Index existiert wohl schon
     return _qdrant_client
@@ -120,8 +131,8 @@ def get_db_connection():
 
 def fetch_all_metadata():
     """
-    Fetches all NID, Delta and Fulltext values from MySQL and returns a dict:
-    { "filename": {"nid": 123, "delta": 0, "fulltext": "..." }, ... }
+    Fetches all NID, Delta and categorized fields from MySQL and returns a dict:
+    { "filename": {"nid": 123, "delta": 0, "fields": {"Name": "Hans", ...} }, ... }
     """
     print("Fetching metadata from MySQL...")
     conn = get_db_connection()
@@ -131,14 +142,32 @@ def fetch_all_metadata():
     metadata_map = {}
     try:
         cursor = conn.cursor(dictionary=True)
-        # JOIN table "totenbilder" to get Fulltext
-        cursor.execute("SELECT b.filename, b.nid, b.delta, t.Fulltext FROM totenbilder_bilder b LEFT JOIN totenbilder t ON b.nid = t.nid")
+        # JOIN table "totenbilder" to get individual fields
+        query = """
+        SELECT b.filename, b.nid, b.delta, 
+               t.Name, t.Nachname, t.Ledigname, t.Ort, t.Strasse, t.Begraebnisort, 
+               t.Beruf1, t.Beruf2, t.Ehrenaemter, t.Bemerkung, t.Trauerspruch, 
+               t.Bildinhalt, t.Todesgrund
+        FROM totenbilder_bilder b 
+        LEFT JOIN totenbilder t ON b.nid = t.nid
+        """
+        cursor.execute(query)
         results = cursor.fetchall()
+        
+        fields_to_check = ['Name', 'Nachname', 'Ledigname', 'Ort', 'Strasse', 
+                           'Begraebnisort', 'Beruf1', 'Beruf2', 'Ehrenaemter', 
+                           'Bemerkung', 'Trauerspruch', 'Bildinhalt', 'Todesgrund']
+                           
         for row in results:
+            fields_data = {}
+            for f in fields_to_check:
+                if row.get(f) and str(row.get(f)).strip():
+                    fields_data[f] = str(row[f]).strip()
+                    
             metadata_map[row['filename']] = {
                 "nid": row['nid'], 
                 "delta": row['delta'],
-                "fulltext": row['Fulltext']
+                "fields": fields_data
             }
         print(f"Loaded metadata for {len(metadata_map)} images.")
     except Exception as e:
@@ -166,36 +195,28 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
     # 0. Metadata laden (für alle Bilder)
     metadata_map = fetch_all_metadata()
 
-    # 1. Collection neu erstellen?
+    # 1. Collections neu erstellen?
     if recreate_collection:
-        print(f"!!! ACHTUNG: Lösche und erstelle Collection '{COLLECTION_NAME}' neu...")
+        print(f"!!! ACHTUNG: Lösche und erstelle Collections neu...")
         qdrant.recreate_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config={
-                "": VectorParams(size=512, distance=Distance.COSINE),
-                "text": VectorParams(size=384, distance=Distance.COSINE)
-            },
+            collection_name=COLLECTION_IMAGES,
+            vectors_config=VectorParams(size=512, distance=Distance.COSINE),
+        )
+        qdrant.recreate_collection(
+            collection_name=COLLECTION_TEXTS,
+            vectors_config=VectorParams(size=384, distance=Distance.COSINE),
         )
         # Payload Index sofort wieder anlegen
-        qdrant.create_payload_index(
-            collection_name=COLLECTION_NAME,
-            field_name="filename",
-            field_schema="keyword",
-        )
-        qdrant.create_payload_index(
-            collection_name=COLLECTION_NAME,
-            field_name="nid", 
-            field_schema="integer"
-        )
-        qdrant.create_payload_index(
-            collection_name=COLLECTION_NAME,
-            field_name="delta", 
-            field_schema="integer"
-        )
+        for coll in [COLLECTION_IMAGES, COLLECTION_TEXTS]:
+            qdrant.create_payload_index(collection_name=coll, field_name="filename", field_schema="keyword")
+            qdrant.create_payload_index(collection_name=coll, field_name="nid", field_schema="integer")
+            qdrant.create_payload_index(collection_name=coll, field_name="delta", field_schema="integer")
+        qdrant.create_payload_index(collection_name=COLLECTION_TEXTS, field_name="field_type", field_schema="keyword")
         force_reindex = True # Logischerweise müssen wir dann alles neu machen
 
     print(f"--- Starte Indexierung. Bucket: {R2_BUCKET_NAME} (Ordner: {R2_PREFIX}) ---")
-    points_buffer = []
+    image_points_buffer = []
+    text_points_buffer = []
     
     paginator = s3.get_paginator('list_objects_v2')
     pages = paginator.paginate(Bucket=R2_BUCKET_NAME, Prefix=R2_PREFIX)
@@ -220,7 +241,7 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
                 # Prüfung: Ist das Bild schon indexiert?
                 if not force_reindex:
                     res = qdrant.scroll(
-                        collection_name=COLLECTION_NAME,
+                        collection_name=COLLECTION_IMAGES,
                         scroll_filter=Filter(
                             must=[FieldCondition(key="filename", match=MatchValue(value=key))]
                         ),
@@ -254,51 +275,62 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
                         os.remove(tmp_path)
                 
                 # Deterministic UUID generation
-                point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
+                img_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
 
                 # Payload zusammenbauen
-                payload = {"filename": key}
+                img_payload = {"filename": key}
                 db_filename = key.replace(R2_PREFIX, "")
                 
-                # Check for Text Embedding based on delta
-                text_vector = None
+                # Metadata and Chunking Text Fields
                 if db_filename in metadata_map:
-                    payload["nid"] = metadata_map[db_filename]["nid"]
-                    payload["delta"] = metadata_map[db_filename]["delta"]
+                    img_payload["nid"] = metadata_map[db_filename]["nid"]
+                    img_payload["delta"] = metadata_map[db_filename]["delta"]
                     
-                    if payload["delta"] == 0 and metadata_map[db_filename]["fulltext"]:
-                        try:
-                            text_vector = list(model_txt.embed([metadata_map[db_filename]["fulltext"]]))[0].tolist()
-                        except Exception as text_e:
-                            print(f"WARNUNG: Text Embedding fehlgeschlagen für {db_filename}: {text_e}")
+                    if img_payload["delta"] == 0 and metadata_map[db_filename].get("fields"):
+                        for field_name, field_value in metadata_map[db_filename]["fields"].items():
+                            try:
+                                text_vector = list(model_txt.embed([field_value]))[0].tolist()
+                                # Deterministic ID based on filename AND field_name
+                                text_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{key}_{field_name}"))
+                                text_points_buffer.append(PointStruct(
+                                    id=text_point_id,
+                                    vector=text_vector,
+                                    payload={
+                                        "filename": key,
+                                        "nid": img_payload["nid"],
+                                        "delta": img_payload["delta"],
+                                        "field_type": field_name,
+                                        "text_content": field_value
+                                    }
+                                ))
+                            except Exception as text_e:
+                                print(f"WARNUNG: Text Embedding fehlgeschlagen für {db_filename} ({field_name}): {text_e}")
                 
-                # Vector dict with named vectors
-                vector_payload = img_vector # fallback
-                if text_vector:
-                    vector_payload = {
-                        "": img_vector,
-                        "text": text_vector
-                    }
-                
-                point = PointStruct(
-                    id=point_id,
-                    vector=vector_payload,
-                    payload=payload
+                # Create Image Point
+                img_point = PointStruct(
+                    id=img_point_id,
+                    vector=img_vector,
+                    payload=img_payload
                 )
-                points_buffer.append(point)
+                image_points_buffer.append(img_point)
                 count_processed += 1
                 
                 # Batch-Upload
-                if len(points_buffer) >= 50:
-                    qdrant.upsert(collection_name=COLLECTION_NAME, points=points_buffer)
-                    points_buffer = []
+                if len(image_points_buffer) >= 50:
+                    qdrant.upsert(collection_name=COLLECTION_IMAGES, points=image_points_buffer)
+                    image_points_buffer = []
                     print(f"Fortschritt: {count_processed} Bilder neu verarbeitet...")
+                if len(text_points_buffer) >= 150: # Text buffer can grow faster
+                    qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points_buffer)
+                    text_points_buffer = []
                     
             except Exception as e:
                 print(f"Fehler bei {key}: {e}")
 
-    if points_buffer:
-        qdrant.upsert(collection_name=COLLECTION_NAME, points=points_buffer)
+    if image_points_buffer:
+        qdrant.upsert(collection_name=COLLECTION_IMAGES, points=image_points_buffer)
+    if text_points_buffer:
+        qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points_buffer)
     
     print(f"--- Indexierung Fertig! Neu: {count_processed}, Übersprungen: {count_skipped} ---")
 
@@ -353,14 +385,22 @@ async def index_single_image(request: SingleIndexRequest):
         payload = {"filename": key}
         
         # Metadata fetch
-        text_vector = None
+        text_points = []
         try:
             conn = get_db_connection()
             if conn:
                 cursor = conn.cursor(dictionary=True)
                 db_filename_stripped = key.replace(R2_PREFIX, "")
                 cursor.execute(
-                    "SELECT b.nid, b.delta, t.Fulltext FROM totenbilder_bilder b LEFT JOIN totenbilder t ON b.nid=t.nid WHERE b.filename = %s OR b.filename = %s", 
+                    """
+                    SELECT b.nid, b.delta, 
+                           t.Name, t.Nachname, t.Ledigname, t.Ort, t.Strasse, t.Begraebnisort, 
+                           t.Beruf1, t.Beruf2, t.Ehrenaemter, t.Bemerkung, t.Trauerspruch, 
+                           t.Bildinhalt, t.Todesgrund
+                    FROM totenbilder_bilder b 
+                    LEFT JOIN totenbilder t ON b.nid=t.nid 
+                    WHERE b.filename = %s OR b.filename = %s
+                    """, 
                     (db_filename_stripped, key)
                 )
                 row = cursor.fetchone()
@@ -368,11 +408,29 @@ async def index_single_image(request: SingleIndexRequest):
                     payload["nid"] = row['nid']
                     payload["delta"] = row['delta']
                     
-                    if payload["delta"] == 0 and row['Fulltext']:
-                        try:
-                            text_vector = list(model_txt.embed([row['Fulltext']]))[0].tolist()
-                        except Exception as text_e:
-                            print(f"WARNUNG: Text Embedding fehlgeschlagen für {key}: {text_e}")
+                    if payload["delta"] == 0:
+                        fields_to_check = ['Name', 'Nachname', 'Ledigname', 'Ort', 'Strasse', 
+                                           'Begraebnisort', 'Beruf1', 'Beruf2', 'Ehrenaemter', 
+                                           'Bemerkung', 'Trauerspruch', 'Bildinhalt', 'Todesgrund']
+                        for f in fields_to_check:
+                            if row.get(f) and str(row.get(f)).strip():
+                                field_value = str(row[f]).strip()
+                                try:
+                                    text_vector = list(model_txt.embed([field_value]))[0].tolist()
+                                    text_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{key}_{f}"))
+                                    text_points.append(PointStruct(
+                                        id=text_point_id,
+                                        vector=text_vector,
+                                        payload={
+                                            "filename": key,
+                                            "nid": payload["nid"],
+                                            "delta": payload["delta"],
+                                            "field_type": f,
+                                            "text_content": field_value
+                                        }
+                                    ))
+                                except Exception as text_e:
+                                    print(f"WARNUNG: Text Embedding fehlgeschlagen für {key} ({f}): {text_e}")
                 else:
                     print(f"WARNUNG: Keine Metadaten für {key} gefunden!")
                     
@@ -381,22 +439,16 @@ async def index_single_image(request: SingleIndexRequest):
         except Exception as e:
             print(f"Error fetching metadata for single image: {e}")
 
-        # Vector dict with named vectors
-        vector_payload = img_vector # fallback
-        if text_vector:
-            vector_payload = {
-                "": img_vector,
-                "text": text_vector
-            }
-
-        point = PointStruct(
+        img_point = PointStruct(
             id=point_id,
-            vector=vector_payload,
+            vector=img_vector,
             payload=payload
         )
         
         # Upsert (direkt, ohne Buffer)
-        qdrant.upsert(collection_name=COLLECTION_NAME, points=[point])
+        qdrant.upsert(collection_name=COLLECTION_IMAGES, points=[img_point])
+        if text_points:
+            qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points)
         
         return {"message": f"Bild '{key}' erfolgreich indexiert.", "filename": key}
 
@@ -435,9 +487,7 @@ async def update_single_text(request: UpdateTextRequest):
         raise HTTPException(status_code=500, detail="Interne Services nicht verfügbar.")
 
     try:
-        print(f"Update Textvektor für: {key}...")
-        
-        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
+        print(f"Update Textvektoren für: {key}...")
         
         # Metadata fetch
         conn = get_db_connection()
@@ -447,7 +497,15 @@ async def update_single_text(request: UpdateTextRequest):
         cursor = conn.cursor(dictionary=True)
         db_filename_stripped = key.replace(R2_PREFIX, "")
         cursor.execute(
-            "SELECT b.delta, t.Fulltext FROM totenbilder_bilder b LEFT JOIN totenbilder t ON b.nid=t.nid WHERE b.filename = %s OR b.filename = %s", 
+            """
+            SELECT b.nid, b.delta, 
+                   t.Name, t.Nachname, t.Ledigname, t.Ort, t.Strasse, t.Begraebnisort, 
+                   t.Beruf1, t.Beruf2, t.Ehrenaemter, t.Bemerkung, t.Trauerspruch, 
+                   t.Bildinhalt, t.Todesgrund
+            FROM totenbilder_bilder b 
+            LEFT JOIN totenbilder t ON b.nid=t.nid 
+            WHERE b.filename = %s OR b.filename = %s
+            """, 
             (db_filename_stripped, key)
         )
         row = cursor.fetchone()
@@ -460,27 +518,46 @@ async def update_single_text(request: UpdateTextRequest):
         if row['delta'] != 0:
             return {"message": f"Übersprungen: {key} ist eine Rückseite (delta>0).", "filename": key}
             
-        fulltext = row['Fulltext']
-        if not fulltext:
-            return {"message": f"Übersprungen: {key} hat keinen Fulltext.", "filename": key}
-
-        # Embedden
-        text_vector = list(model_txt.embed([fulltext]))[0].tolist()
-        
-        # update_vectors
-        qdrant.update_vectors(
-            collection_name=COLLECTION_NAME,
-            points=[
-                PointVectors(
-                    id=point_id,
-                    vector={
-                        "text": text_vector
-                    }
-                )
-            ]
+        # Zuerst alte Textvektoren für dieses Bild löschen
+        qdrant.delete(
+            collection_name=COLLECTION_TEXTS,
+            points_selector=Filter(
+                must=[FieldCondition(key="filename", match=MatchValue(value=key))]
+            ),
         )
         
-        return {"message": f"Textvektor für '{key}' erfolgreich aktualisiert.", "filename": key}
+        nid = row['nid']
+        delta = row['delta']
+        
+        text_points = []
+        fields_to_check = ['Name', 'Nachname', 'Ledigname', 'Ort', 'Strasse', 
+                           'Begraebnisort', 'Beruf1', 'Beruf2', 'Ehrenaemter', 
+                           'Bemerkung', 'Trauerspruch', 'Bildinhalt', 'Todesgrund']
+        
+        for f in fields_to_check:
+            if row.get(f) and str(row.get(f)).strip():
+                field_value = str(row[f]).strip()
+                try:
+                    text_vector = list(model_txt.embed([field_value]))[0].tolist()
+                    text_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{key}_{f}"))
+                    text_points.append(PointStruct(
+                        id=text_point_id,
+                        vector=text_vector,
+                        payload={
+                            "filename": key,
+                            "nid": nid,
+                            "delta": delta,
+                            "field_type": f,
+                            "text_content": field_value
+                        }
+                    ))
+                except Exception as text_e:
+                    print(f"WARNUNG: Text Embedding fehlgeschlagen für {key} ({f}): {text_e}")
+
+        if text_points:
+            qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points)
+        
+        return {"message": f"Textvektoren für '{key}' erfolgreich aktualisiert.", "filename": key}
 
     except HTTPException as he:
         raise he
@@ -499,15 +576,26 @@ def process_update_all_text():
     print("Starte Update aller Textvektoren...")
     
     metadata_map = fetch_all_metadata()
+    
+    print(f"!!! ACHTUNG: Lösche und erstelle Collection '{COLLECTION_TEXTS}' neu...")
+    qdrant.recreate_collection(
+        collection_name=COLLECTION_TEXTS,
+        vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+    )
+    for coll in [COLLECTION_TEXTS]:
+        qdrant.create_payload_index(collection_name=coll, field_name="filename", field_schema="keyword")
+        qdrant.create_payload_index(collection_name=coll, field_name="nid", field_schema="integer")
+        qdrant.create_payload_index(collection_name=coll, field_name="delta", field_schema="integer")
+        qdrant.create_payload_index(collection_name=coll, field_name="field_type", field_schema="keyword")
+
+    text_points_buffer = []
     count_success = 0
-    count_skipped = 0
-    count_error = 0
     
     offset = None
     while True:
         points, next_offset = qdrant.scroll(
-            collection_name=COLLECTION_NAME,
-            with_payload=["filename", "delta"],
+            collection_name=COLLECTION_IMAGES,
+            with_payload=["filename", "delta", "nid"],
             with_vectors=False,
             limit=500,
             offset=offset
@@ -518,43 +606,44 @@ def process_update_all_text():
             delta = point.payload.get("delta", 0)
             
             if not filename or delta != 0:
-                count_skipped += 1
                 continue
                 
             db_filename = filename.replace(R2_PREFIX, "")
             
-            if db_filename in metadata_map:
-                fulltext = metadata_map[db_filename]["fulltext"]
-                if fulltext:
+            if db_filename in metadata_map and metadata_map[db_filename].get("fields"):
+                for field_name, field_value in metadata_map[db_filename]["fields"].items():
                     try:
-                        text_vector = list(model_txt.embed([fulltext]))[0].tolist()
-                        qdrant.update_vectors(
-                            collection_name=COLLECTION_NAME,
-                            points=[
-                                PointVectors(
-                                    id=point.id,
-                                    vector={
-                                        "text": text_vector
-                                    }
-                                )
-                            ]
-                        )
-                        count_success += 1
-                        if count_success % 50 == 0:
-                            print(f"{count_success} Textvektoren aktualisiert...")
+                        text_vector = list(model_txt.embed([field_value]))[0].tolist()
+                        text_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{filename}_{field_name}"))
+                        text_points_buffer.append(PointStruct(
+                            id=text_point_id,
+                            vector=text_vector,
+                            payload={
+                                "filename": filename,
+                                "nid": point.payload.get("nid"),
+                                "delta": delta,
+                                "field_type": field_name,
+                                "text_content": field_value
+                            }
+                        ))
                     except Exception as e:
-                        print(f"Fehler bei {filename}: {e}")
-                        count_error += 1
-                else:
-                    count_skipped += 1
-            else:
-                count_skipped += 1
+                        print(f"Fehler bei {filename} ({field_name}): {e}")
                 
+            if len(text_points_buffer) >= 150:
+                qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points_buffer)
+                count_success += len(text_points_buffer)
+                print(f"Fortschritt: {count_success} Text-Chunks generiert...")
+                text_points_buffer = []
+
         offset = next_offset
         if offset is None:
             break
             
-    print(f"Text Update abgeschlossen! Erfolgreich: {count_success}, Übersprungen: {count_skipped}, Fehler: {count_error}")
+    if text_points_buffer:
+        qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points_buffer)
+        count_success += len(text_points_buffer)
+            
+    print(f"Text Update abgeschlossen! Erfolgreich angelegt: {count_success} Text-Chunks.")
 
 @router.post("/update-text-all", dependencies=[Depends(verify_index_key)])
 async def update_all_text(background_tasks: BackgroundTasks):
@@ -579,20 +668,23 @@ async def delete_by_nid(request: DeleteByNidRequest):
     try:
         print(f"Lösche alle Vektoren für NID {request.nid} aus Qdrant...")
         
-        # Wir löschen alle Punkte, deren NID-Feld in der Payload übereinstimmt
-        operation_info = qdrant.delete(
-            collection_name=COLLECTION_NAME,
-            points_selector=Filter(
-                must=[
-                    FieldCondition(
-                        key="nid",
-                        match=MatchValue(value=request.nid)
-                    )
-                ]
-            ),
-        )
+        # Wir löschen alle Punkte, deren NID-Feld in der Payload übereinstimmt, in beiden Collections
+        status_info = []
+        for coll in [COLLECTION_IMAGES, COLLECTION_TEXTS]:
+            operation_info = qdrant.delete(
+                collection_name=coll,
+                points_selector=Filter(
+                    must=[
+                        FieldCondition(
+                            key="nid",
+                            match=MatchValue(value=request.nid)
+                        )
+                    ]
+                ),
+            )
+            status_info.append(operation_info.status)
 
-        return {"message": f"Vektoren für NID {request.nid} erfolgreich gelöscht.", "status": operation_info.status}
+        return {"message": f"Vektoren für NID {request.nid} erfolgreich gelöscht.", "status": str(status_info)}
     except Exception as e:
         print(f"Fehler beim Löschen für NID {request.nid}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -614,24 +706,22 @@ async def delete_single_image(request: DeleteByFilenameRequest):
     try:
         print(f"Lösche Vektor für Bild {key} aus Qdrant...")
         
-        # Da wir eine deterministische UUID für den Dateinamen vergeben haben
-        # beim Indexieren, können wir sie auch wieder neu berechnen.
-        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
+        status_info = []
+        for coll in [COLLECTION_IMAGES, COLLECTION_TEXTS]:
+            operation_info = qdrant.delete(
+                collection_name=coll,
+                points_selector=Filter(
+                    must=[
+                        FieldCondition(
+                            key="filename",
+                            match=MatchValue(value=key)
+                        )
+                    ]
+                ),
+            )
+            status_info.append(operation_info.status)
         
-        # Alternativ über Payload Filter löschen (sicherer falls der ID-Algorithmus gewechselt wurde)
-        operation_info = qdrant.delete(
-            collection_name=COLLECTION_NAME,
-            points_selector=Filter(
-                must=[
-                    FieldCondition(
-                        key="filename",
-                        match=MatchValue(value=key)
-                    )
-                ]
-            ),
-        )
-        
-        return {"message": f"Bild '{key}' erfolgreich aus Qdrant gelöscht.", "status": operation_info.status}
+        return {"message": f"Bild '{key}' erfolgreich aus Qdrant gelöscht.", "status": str(status_info)}
 
     except Exception as e:
         print(f"Fehler beim Löschen vom Bild {key}: {e}")
