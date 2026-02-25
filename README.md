@@ -8,9 +8,11 @@ Basierend auf **FastAPI**, **Qdrant**, **MySQL** und **FastEmbed**.
 - **Semantische Suche**: Findet Bilder anhand von Textbeschreibungen ("Grabstein mit Engel") oder visueller Ähnlichkeit zu anderen Bildern.
 - **High-Performance AI**: Nutzt `FastEmbed` (Quantized CLIP Models) für extrem schnelle und speicherschonende Vektorisierung.
 - **Hybrid-Datenhaltung**:
-  - **Vektoren**: Qdrant (für Ähnlichkeitssuche).
-  - **Metadaten**: MySQL (für NID, Delta, Status).
+  - **Vektoren (Bilder)**: Qdrant Collection 1 (`totenbilder` für CLIP Image-Embedding).
+  - **Vektoren (Texte)**: Qdrant Collection 2 (`totenbilder_texte` für MiniLM Text-Vektoren, chunked nach Datenbank-Feldern).
+  - **Metadaten**: MySQL (für NID, Delta, Status, Roh-Feldinhalte).
   - **Storage**: Cloudflare R2 (S3-kompatibel).
+- **Asymmetrische Semantische Suche**: Automatisiertes Chunking einzelner Datenbankfelder (Ort, Beruf, Todesgrund etc.) für exaktere Texttreffer in langen Dokumenten.
 - **Auto-Sync**: Background-Tasks zur Synchronisation von MySQL-Metadaten in den Vektor-Index.
 - **Integrierte Security**: Session-basiertes Login-System und API-Key Schutz für Admin-Tasks.
 - **Frontend**: Integriertes statisches Dashboard für Suche und Verwaltung.
@@ -34,7 +36,8 @@ INDEX_API_KEY=mein_geheimer_admin_key  # Für Indexing-Endpoints
 # --- Qdrant Vector DB ---
 QDRANT_URL=https://...
 QDRANT_API_KEY=...
-QDRANT_COLLECTION_NAME=totenbilder
+QDRANT_COLLECTION_IMAGES=totenbilder
+QDRANT_COLLECTION_TEXTS=totenbilder_texte
 
 # --- S3 / Cloudflare R2 Storage ---
 R2_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com
@@ -84,6 +87,23 @@ Volle Suchfunktionalität inkl. Image-to-Image Suche und expliziter Textsuche.
 }
 ```
 
+**Antwort-Struktur (Rückgabe):**
+Beispiel-Antwort für beide `/api/search` Methoden. Bei `type="text"` liefert die API zusätzlich die Felder `field_type` (z.B. "Todesgrund") und `text_content`, die dem Frontend exakt zeigen, *warum* und *wo* der Suchbegriff gefunden wurde.
+
+```json
+[
+  {
+    "filename": "musterbild.jpg",
+    "image_url": "https://pub-...",
+    "score": 0.85,
+    "nid": 1234,
+    "delta": 0,
+    "field_type": "Todesgrund",           // NEU (nur bei type="text")
+    "text_content": "gefallen in Russland" // NEU (nur bei type="text")
+  }
+]
+```
+
 ### ⚙️ Indexierung (Upload/Index)
 
 **`POST /api/index`**
@@ -107,7 +127,7 @@ Indiziert den Textvektor eines Bildes neu (nur bei `delta=0`). Der Bild-Hauptvek
 ```
 
 **`POST /api/update-text-all`**
-Aktualisiert alle Textvektoren für Bilder mit `delta=0` im Hintergrund. Holt die Volltexte aus der MySQL-Datenbank und speichert die neuen Vektoren in Qdrant.
+Aktualisiert alle Textvektoren für Bilder mit `delta=0` im Hintergrund. Verwirft alte Textvektoren, holt die Kategorien (`Beruf`, `Todesgrund`, `Ort`, etc.) aus der MySQL-Datenbank und speichert jeden Feld-Wert als separaten Chunk in der `totenbilder_texte` Qdrant-Collection.
 *Header:* `X-API-Key: <INDEX_API_KEY>`
 ```json
 {}
