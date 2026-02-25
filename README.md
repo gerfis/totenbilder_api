@@ -96,6 +96,29 @@ Indiziert oder aktualisiert ein spezifisches Bild sofort.
 { "filename": "1234.jpg" }
 ```
 
+**`POST /api/update-text-one`**
+Indiziert den Textvektor eines Bildes neu (nur bei `delta=0`). Der Bild-Hauptvektor bleibt unberührt.
+*Header:* `X-API-Key: <INDEX_API_KEY>`
+```json
+{ "filename": "1234.jpg" }
+```
+
+### 🗑️ Löschen (Delete)
+
+**`POST /api/delete-by-nid`**
+Löscht alle Vektoren aus Qdrant, die zu einer bestimmten personenspezifischen NID gehören.
+*Header:* `X-API-Key: <INDEX_API_KEY>`
+```json
+{ "nid": 123 }
+```
+
+**`POST /api/delete-one`**
+Löscht einen einzelnen Vektor anhand des Dateinamens aus dem Qdrant-Index.
+*Header:* `X-API-Key: <INDEX_API_KEY>`
+```json
+{ "filename": "1234.jpg" }
+```
+
 ### 🔧 Wartung (Maintenance)
 
 **`POST /api/update-payload`**
