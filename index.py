@@ -408,29 +408,7 @@ async def index_single_image(request: SingleIndexRequest):
                     payload["nid"] = row['nid']
                     payload["delta"] = row['delta']
                     
-                    if payload["delta"] == 0:
-                        fields_to_check = ['Name', 'Nachname', 'Ledigname', 'Ort', 'Strasse', 
-                                           'Begraebnisort', 'Beruf1', 'Beruf2', 'Ehrenaemter', 
-                                           'Bemerkung', 'Trauerspruch', 'Bildinhalt', 'Todesgrund']
-                        for f in fields_to_check:
-                            if row.get(f) and str(row.get(f)).strip():
-                                field_value = str(row[f]).strip()
-                                try:
-                                    text_vector = list(model_txt.embed([field_value]))[0].tolist()
-                                    text_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{key}_{f}"))
-                                    text_points.append(PointStruct(
-                                        id=text_point_id,
-                                        vector=text_vector,
-                                        payload={
-                                            "filename": key,
-                                            "nid": payload["nid"],
-                                            "delta": payload["delta"],
-                                            "field_type": f,
-                                            "text_content": field_value
-                                        }
-                                    ))
-                                except Exception as text_e:
-                                    print(f"WARNUNG: Text Embedding fehlgeschlagen für {key} ({f}): {text_e}")
+                    # Text-Indizierung hier entfernt (wird separat über /api/update-text-* gehandhabt)
                 else:
                     print(f"WARNUNG: Keine Metadaten für {key} gefunden!")
                     
