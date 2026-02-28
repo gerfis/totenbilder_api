@@ -30,15 +30,12 @@ app = FastAPI(lifespan=lifespan, title="Totenbilder API")
 # Configure CORS
 origins = [
     "http://localhost:3000",
-    "https://totenbilder.at",
-    "https://www.totenbilder.at",
-    "https://api.totenbilder.at",
-    "https://neue.totenbilder.at"
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"https://(.*?\.)?totenbilder\.at",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
