@@ -7,7 +7,9 @@ from typing import List, Optional
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
+from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
 from deep_translator import GoogleTranslator
+import mysql.connector
 
 load_dotenv()
 
@@ -18,6 +20,10 @@ COLLECTION_IMAGES = os.getenv("QDRANT_COLLECTION_IMAGES", "totenbilder_v2")
 COLLECTION_TEXTS = os.getenv("QDRANT_COLLECTION_TEXTS", "totenbilder_texte")
 PUBLIC_IMAGE_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
 
+DB_HOST = os.getenv("DB_HOST")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_NAME = os.getenv("DB_NAME")
 
 
 router = APIRouter()
@@ -46,6 +52,19 @@ def get_qdrant_client():
     if _qdrant_client is None:
         _qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
     return _qdrant_client
+
+def get_db_connection():
+    try:
+        conn = mysql.connector.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME
+        )
+        return conn
+    except mysql.connector.Error as err:
+        print(f"Error connecting to database: {err}")
+        return None
 
 class SearchQuery(BaseModel):
     query: Optional[str] = None
@@ -197,3 +216,80 @@ def create_result(hit):
         field_type=field_type,
         text_content=text_content
     )
+
+class LatestResult(BaseModel):
+    nid: int
+    Name: str
+    Sterbedatum: Optional[str] = None
+    Sterbetag: Optional[int] = None
+    Sterbemonat: Optional[int] = None
+    Sterbejahr: Optional[int] = None
+    Ort: Optional[str] = None
+    url: str
+    alias: Optional[str] = None
+
+@router.get("/latest", response_model=List[LatestResult])
+async def get_latest(anzahl: int = 10, ort: Optional[str] = None):
+    """
+    Gibt die letzten <anzahl> Totenbilder als JSON aus, nach nid absteigend sortiert.
+    Optional kann nach Ort gefiltert werden.
+    """
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection error")
+        
+    try:
+        cursor = conn.cursor(dictionary=True)
+        if ort:
+            query = """
+                SELECT t.nid, t.Name, t.Sterbedatum, t.Sterbetag, t.Sterbemonat, t.Sterbejahr, t.Ort, t.alias, b.filename
+                FROM totenbilder t
+                JOIN totenbilder_bilder b ON t.nid = b.nid
+                WHERE b.delta = 0 AND t.Ort = %s
+                ORDER BY t.nid DESC
+                LIMIT %s
+            """
+            cursor.execute(query, (ort, anzahl))
+        else:
+            query = """
+                SELECT t.nid, t.Name, t.Sterbedatum, t.Sterbetag, t.Sterbemonat, t.Sterbejahr, t.Ort, t.alias, b.filename
+                FROM totenbilder t
+                JOIN totenbilder_bilder b ON t.nid = b.nid
+                WHERE b.delta = 0
+                ORDER BY t.nid DESC
+                LIMIT %s
+            """
+            cursor.execute(query, (anzahl,))
+            
+        rows = cursor.fetchall()
+        
+        results = []
+        base = PUBLIC_IMAGE_BASE_URL.rstrip("/") if PUBLIC_IMAGE_BASE_URL else ""
+        r2_prefix = os.getenv("R2_PREFIX", "totenbilder/")
+        
+        for row in rows:
+            fname_key = row["filename"]
+            # Sicherstellen, dass der Prefix vorhanden ist, falls noetig
+            if not fname_key.startswith(r2_prefix):
+                fname_key = f"{r2_prefix}{fname_key}"
+            
+            image_url = f"{base}/{fname_key}"
+            
+            results.append({
+                "nid": row["nid"],
+                "Name": row["Name"] or "",
+                "Sterbedatum": row["Sterbedatum"],
+                "Sterbetag": row["Sterbetag"],
+                "Sterbemonat": row["Sterbemonat"],
+                "Sterbejahr": row["Sterbejahr"],
+                "Ort": row["Ort"],
+                "url": image_url,
+                "alias": row["alias"]
+            })
+            
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()

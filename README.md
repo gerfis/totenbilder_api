@@ -65,6 +65,30 @@ Der Server läuft standardmäßig auf `http://0.0.0.0:8000`.
 
 ## API Referenz
 
+### 🆕 Neueste Einträge (Latest)
+
+**`GET /api/latest`**
+Gibt die neuesten Totenbilder (Hauptseiten, `delta=0`) direkt aus der MySQL-Datenbank als JSON zurück, absteigend sortiert nach `nid`.
+- `anzahl`: Limitiert die Anzahl der Ergebnisse (Default: 10).
+- `ort`: Filtert die Ergebnisse nach einem bestimmten Ort. Ohne Angabe werden Bilder aus allen Orten zurückgegeben.
+
+**Antwort-Struktur:**
+```json
+[
+  {
+    "nid": 1234,
+    "Name": "Name der Person",
+    "Sterbedatum": "2023-01-01T00:00",
+    "Sterbetag": 1,
+    "Sterbemonat": 1,
+    "Sterbejahr": 2023,
+    "Ort": "Ortsname",
+    "alias": "name-der-person",
+    "url": "https://<R2_PUBLIC_BASE_URL>/totenbilder/bild.jpg"
+  }
+]
+```
+
 ### 🔍 Suche (Search)
 
 **`GET /api/search`**
