@@ -246,7 +246,7 @@ async def get_latest(anzahl: int = 10, ort: Optional[str] = None):
                 FROM totenbilder t
                 JOIN totenbilder_bilder b ON t.nid = b.nid
                 WHERE b.delta = 0 AND t.Ort = %s
-                ORDER BY t.nid DESC
+                ORDER BY t.Sterbedatum DESC
                 LIMIT %s
             """
             cursor.execute(query, (ort, anzahl))
@@ -256,7 +256,7 @@ async def get_latest(anzahl: int = 10, ort: Optional[str] = None):
                 FROM totenbilder t
                 JOIN totenbilder_bilder b ON t.nid = b.nid
                 WHERE b.delta = 0
-                ORDER BY t.nid DESC
+                ORDER BY t.Sterbedatum DESC
                 LIMIT %s
             """
             cursor.execute(query, (anzahl,))
