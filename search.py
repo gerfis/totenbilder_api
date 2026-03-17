@@ -43,7 +43,10 @@ def get_gemini_client():
     global _gemini_client
     if _gemini_client is None:
         if GEMINI_API_KEY:
-            _gemini_client = google.genai.Client(api_key=GEMINI_API_KEY)
+            _gemini_client = google.genai.Client(
+                api_key=GEMINI_API_KEY,
+                http_options={'headers': {'referer': 'https://admin.totenbilder.at'}}
+            )
         else:
             print("WARNUNG: GEMINI_API_KEY nicht gesetzt!")
     return _gemini_client
