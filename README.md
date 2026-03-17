@@ -101,15 +101,15 @@ Einfache Textsuche, ideal für Browser-Tests.
 - `limit`: Anzahl (Default: 30)
 - `delta`: Filter (z.B. "0", ">0", "alle")
 - `type`: Such-Modus (`"image"` für visuelle Suche im Bild, `"text"` für OCR-Volltextsuche) (Default: `"image"`)
-- `method`: Die zugrundeliegende Embedding-Technologie (`"fastembed"` oder `"gemini"`) (Default: `"fastembed"`)
+- `method`: Die zugrundeliegende Embedding-Technologie (`"gemini"` oder `"fastembed"`) (Default: `"gemini"`)
 
 **`POST /api/search`**
-Volle Suchfunktionalität inkl. Image-to-Image Suche und expliziter Textsuche via FastEmbed oder Gemini.
+Volle Suchfunktionalität inkl. Image-to-Image Suche und expliziter Textsuche via Gemini oder FastEmbed.
 ```json
 {
   "query": "Ein Soldat in Uniform",
   "type": "image",                 // Optional: "image" oder "text"
-  "method": "fastembed",           // Optional: "fastembed" oder "gemini"
+  "method": "gemini",              // Optional: "gemini" oder "fastembed"
   "similar": "referenz_bild.jpg",  // Optional: Ähnlichkeitssuche anstatt Text-Query
   "limit": 50,
   "offset": 0,

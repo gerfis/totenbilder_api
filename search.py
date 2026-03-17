@@ -107,7 +107,7 @@ class SearchQuery(BaseModel):
     offset: int = 0
     delta: Optional[str] = "alle"
     type: str = "image" # "image" (CLIP) oder "text" (MiniLM)
-    method: str = "fastembed" # "fastembed" oder "gemini"
+    method: str = "gemini" # "fastembed" oder "gemini"
 
 class SearchResult(BaseModel):
     filename: str
