@@ -11,6 +11,8 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, VectorParams, Distance, Filter, FieldCondition, MatchValue, PointVectors
 import mysql.connector
 import hashlib
+import google.genai
+from google.genai import types as genai_types
 
 load_dotenv()
 
@@ -24,6 +26,8 @@ R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
 R2_PREFIX = os.getenv("R2_PREFIX")
 COLLECTION_IMAGES = os.getenv("QDRANT_COLLECTION_IMAGES", "totenbilder_v2")
 COLLECTION_TEXTS = os.getenv("QDRANT_COLLECTION_TEXTS", "totenbilder_texte")
+COLLECTION_GEMINI = os.getenv("QDRANT_COLLECTION_GEMINI", "totenbilder_gemini_768")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 INDEX_API_KEY = os.getenv("INDEX_API_KEY")
 DB_HOST = os.getenv("DB_HOST")
 DB_USER = os.getenv("DB_USER")
@@ -57,6 +61,46 @@ _model_img = None
 _model_txt = None
 _s3_client = None
 _qdrant_client = None
+_gemini_client = None
+
+def get_gemini_client():
+    global _gemini_client
+    if _gemini_client is None:
+        if GEMINI_API_KEY:
+            _gemini_client = google.genai.Client(api_key=GEMINI_API_KEY)
+        else:
+            print("WARNUNG: GEMINI_API_KEY nicht gesetzt!")
+    return _gemini_client
+
+def generate_gemini_embedding(file_content: bytes, filename: str, combined_text: str = ""):
+    client = get_gemini_client()
+    if not client:
+        return None
+        
+    mime_type = "image/jpeg"
+    if filename.lower().endswith('.png'):
+        mime_type = "image/png"
+    elif filename.lower().endswith('.webp'):
+        mime_type = "image/webp"
+
+    contents = [
+        genai_types.Part.from_bytes(data=file_content, mime_type=mime_type)
+    ]
+    if combined_text:
+        contents.append(combined_text)
+        
+    try:
+        response = client.models.embed_content(
+            model="gemini-embedding-2-preview",
+            contents=contents,
+            config=genai_types.EmbedContentConfig(output_dimensionality=768)
+        )
+        # response is likely EmbedContentResponse, which has a list of embeddings
+        return response.embeddings[0].values
+    except Exception as e:
+        print(f"WARNUNG: Gemini Embedding fehlgeschlagen für {filename}: {e}")
+        return None
+
 def get_model():
     global _model_img
     if _model_img is None:
@@ -104,9 +148,16 @@ def get_qdrant_client():
                 vectors_config=VectorParams(size=384, distance=Distance.COSINE),
             )
             
+        # Init Gemini Collection
+        if not _qdrant_client.collection_exists(COLLECTION_GEMINI):
+            _qdrant_client.create_collection(
+                collection_name=COLLECTION_GEMINI,
+                vectors_config=VectorParams(size=768, distance=Distance.COSINE),
+            )
+            
         # Payload Indices sicherstellen
         try:
-            for coll in [COLLECTION_IMAGES, COLLECTION_TEXTS]:
+            for coll in [COLLECTION_IMAGES, COLLECTION_TEXTS, COLLECTION_GEMINI]:
                 _qdrant_client.create_payload_index(collection_name=coll, field_name="filename", field_schema="keyword")
                 _qdrant_client.create_payload_index(collection_name=coll, field_name="nid", field_schema="integer")
                 _qdrant_client.create_payload_index(collection_name=coll, field_name="delta", field_schema="integer")
@@ -206,8 +257,12 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
             collection_name=COLLECTION_TEXTS,
             vectors_config=VectorParams(size=384, distance=Distance.COSINE),
         )
+        qdrant.recreate_collection(
+            collection_name=COLLECTION_GEMINI,
+            vectors_config=VectorParams(size=768, distance=Distance.COSINE),
+        )
         # Payload Index sofort wieder anlegen
-        for coll in [COLLECTION_IMAGES, COLLECTION_TEXTS]:
+        for coll in [COLLECTION_IMAGES, COLLECTION_TEXTS, COLLECTION_GEMINI]:
             qdrant.create_payload_index(collection_name=coll, field_name="filename", field_schema="keyword")
             qdrant.create_payload_index(collection_name=coll, field_name="nid", field_schema="integer")
             qdrant.create_payload_index(collection_name=coll, field_name="delta", field_schema="integer")
@@ -217,6 +272,7 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
     print(f"--- Starte Indexierung. Bucket: {R2_BUCKET_NAME} (Ordner: {R2_PREFIX}) ---")
     image_points_buffer = []
     text_points_buffer = []
+    gemini_points_buffer = []
     
     paginator = s3.get_paginator('list_objects_v2')
     pages = paginator.paginate(Bucket=R2_BUCKET_NAME, Prefix=R2_PREFIX)
@@ -281,12 +337,15 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
                 img_payload = {"filename": key}
                 db_filename = key.replace(R2_PREFIX, "")
                 
+                # Calculate combined text for Gemini
+                combined_text = ""
                 # Metadata and Chunking Text Fields
                 if db_filename in metadata_map:
                     img_payload["nid"] = metadata_map[db_filename]["nid"]
                     img_payload["delta"] = metadata_map[db_filename]["delta"]
                     
                     if img_payload["delta"] == 0 and metadata_map[db_filename].get("fields"):
+                        combined_text = " ".join(metadata_map[db_filename]["fields"].values())
                         for field_name, field_value in metadata_map[db_filename]["fields"].items():
                             try:
                                 text_vector = list(model_txt.embed([field_value]))[0].tolist()
@@ -313,6 +372,17 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
                     payload=img_payload
                 )
                 image_points_buffer.append(img_point)
+                
+                # Create Gemini Point
+                gemini_vector = generate_gemini_embedding(file_content, key, combined_text)
+                if gemini_vector:
+                    gemini_point = PointStruct(
+                        id=img_point_id, # Can share the same UUID based on key
+                        vector=gemini_vector,
+                        payload=img_payload
+                    )
+                    gemini_points_buffer.append(gemini_point)
+                
                 count_processed += 1
                 
                 # Batch-Upload
@@ -320,6 +390,9 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
                     qdrant.upsert(collection_name=COLLECTION_IMAGES, points=image_points_buffer)
                     image_points_buffer = []
                     print(f"Fortschritt: {count_processed} Bilder neu verarbeitet...")
+                if len(gemini_points_buffer) >= 50:
+                    qdrant.upsert(collection_name=COLLECTION_GEMINI, points=gemini_points_buffer)
+                    gemini_points_buffer = []
                 if len(text_points_buffer) >= 150: # Text buffer can grow faster
                     qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points_buffer)
                     text_points_buffer = []
@@ -331,6 +404,8 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
         qdrant.upsert(collection_name=COLLECTION_IMAGES, points=image_points_buffer)
     if text_points_buffer:
         qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points_buffer)
+    if gemini_points_buffer:
+        qdrant.upsert(collection_name=COLLECTION_GEMINI, points=gemini_points_buffer)
     
     print(f"--- Indexierung Fertig! Neu: {count_processed}, Übersprungen: {count_skipped} ---")
 
@@ -386,6 +461,7 @@ async def index_single_image(request: SingleIndexRequest):
         
         # Metadata fetch
         text_points = []
+        combined_text = ""
         try:
             conn = get_db_connection()
             if conn:
@@ -408,7 +484,15 @@ async def index_single_image(request: SingleIndexRequest):
                     payload["nid"] = row['nid']
                     payload["delta"] = row['delta']
                     
-                    # Text-Indizierung hier entfernt (wird separat über /api/update-text-* gehandhabt)
+                    if payload["delta"] == 0:
+                        fields_to_check = ['Name', 'Nachname', 'Ledigname', 'Ort', 'Strasse', 
+                                         'Begraebnisort', 'Beruf1', 'Beruf2', 'Ehrenaemter', 
+                                         'Bemerkung', 'Trauerspruch', 'Bildinhalt', 'Todesgrund']
+                        texts = []
+                        for f in fields_to_check:
+                            if row.get(f) and str(row.get(f)).strip():
+                                texts.append(str(row[f]).strip())
+                        combined_text = " ".join(texts)
                 else:
                     print(f"WARNUNG: Keine Metadaten für {key} gefunden!")
                     
@@ -427,6 +511,15 @@ async def index_single_image(request: SingleIndexRequest):
         qdrant.upsert(collection_name=COLLECTION_IMAGES, points=[img_point])
         if text_points:
             qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points)
+            
+        gemini_vector = generate_gemini_embedding(file_content, key, combined_text)
+        if gemini_vector:
+            gemini_point = PointStruct(
+                id=point_id,
+                vector=gemini_vector,
+                payload=payload
+            )
+            qdrant.upsert(collection_name=COLLECTION_GEMINI, points=[gemini_point])
         
         return {"message": f"Bild '{key}' erfolgreich indexiert.", "filename": key}
 
@@ -631,6 +724,95 @@ async def update_all_text(background_tasks: BackgroundTasks):
     background_tasks.add_task(process_update_all_text)
     return {"message": "Update aller Textvektoren wurde im Hintergrund gestartet."}
 
+def process_update_all_gemini():
+    """Hintergrund-Task zum Durchlaufen aller Bilder und Neu-Erstellen der Gemini Embeddings"""
+    s3 = get_s3_client()
+    qdrant = get_qdrant_client()
+    
+    if not s3 or not qdrant:
+        print("Fehler: Clients nicht verfügbar")
+        return
+        
+    print(f"!!! ACHTUNG: Lösche und erstelle Collection '{COLLECTION_GEMINI}' neu...")
+    qdrant.recreate_collection(
+        collection_name=COLLECTION_GEMINI,
+        vectors_config=VectorParams(size=768, distance=Distance.COSINE),
+    )
+    for coll in [COLLECTION_GEMINI]:
+        qdrant.create_payload_index(collection_name=coll, field_name="filename", field_schema="keyword")
+        qdrant.create_payload_index(collection_name=coll, field_name="nid", field_schema="integer")
+        qdrant.create_payload_index(collection_name=coll, field_name="delta", field_schema="integer")
+        
+    print("Fetching metadata for Gemini...")
+    metadata_map = fetch_all_metadata()
+    
+    gemini_points_buffer = []
+    count_success = 0
+    count_skipped = 0
+    
+    paginator = s3.get_paginator('list_objects_v2')
+    pages = paginator.paginate(Bucket=R2_BUCKET_NAME, Prefix=R2_PREFIX)
+    
+    for page in pages:
+        if 'Contents' not in page:
+            continue
+            
+        for obj in page['Contents']:
+            key = obj['Key']
+            if key == R2_PREFIX or not key.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                continue
+                
+            try:
+                db_filename = key.replace(R2_PREFIX, "")
+                combined_text = ""
+                payload = {"filename": key}
+                
+                if db_filename in metadata_map:
+                    payload["nid"] = metadata_map[db_filename]["nid"]
+                    payload["delta"] = metadata_map[db_filename]["delta"]
+                    
+                    if payload["delta"] == 0 and metadata_map[db_filename].get("fields"):
+                        combined_text = " ".join(metadata_map[db_filename]["fields"].values())
+                
+                file_obj = s3.get_object(Bucket=R2_BUCKET_NAME, Key=key)
+                file_content = file_obj['Body'].read()
+                
+                gemini_vector = generate_gemini_embedding(file_content, key, combined_text)
+                if gemini_vector:
+                    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
+                    gemini_point = PointStruct(
+                        id=point_id,
+                        vector=gemini_vector,
+                        payload=payload
+                    )
+                    gemini_points_buffer.append(gemini_point)
+                    count_success += 1
+                else:
+                    count_skipped += 1
+                    
+                if len(gemini_points_buffer) >= 50:
+                    qdrant.upsert(collection_name=COLLECTION_GEMINI, points=gemini_points_buffer)
+                    gemini_points_buffer = []
+                    print(f"Fortschritt: {count_success} Gemini Embeddings generiert...")
+                    
+            except Exception as e:
+                print(f"Fehler bei {key}: {e}")
+                count_skipped += 1
+
+    if gemini_points_buffer:
+        qdrant.upsert(collection_name=COLLECTION_GEMINI, points=gemini_points_buffer)
+        
+    print(f"Gemini Update abgeschlossen! Erfolgreich: {count_success}, Übersprungen/Fehler: {count_skipped}")
+
+@router.post("/index-all-gemini", dependencies=[Depends(verify_index_key)])
+async def trigger_index_all_gemini(background_tasks: BackgroundTasks):
+    """
+    Startet die Indexierung der Bilder exklusiv für Gemini im Hintergrund.
+    Dies löscht die Gemini Collection vorher.
+    """
+    background_tasks.add_task(process_update_all_gemini)
+    return {"message": "Gemini-Indexierung wurde im Hintergrund gestartet."}
+
 class DeleteByNidRequest(BaseModel):
     nid: int
 
@@ -648,7 +830,7 @@ async def delete_by_nid(request: DeleteByNidRequest):
         
         # Wir löschen alle Punkte, deren NID-Feld in der Payload übereinstimmt, in beiden Collections
         status_info = []
-        for coll in [COLLECTION_IMAGES, COLLECTION_TEXTS]:
+        for coll in [COLLECTION_IMAGES, COLLECTION_TEXTS, COLLECTION_GEMINI]:
             operation_info = qdrant.delete(
                 collection_name=coll,
                 points_selector=Filter(
@@ -685,7 +867,7 @@ async def delete_single_image(request: DeleteByFilenameRequest):
         print(f"Lösche Vektor für Bild {key} aus Qdrant...")
         
         status_info = []
-        for coll in [COLLECTION_IMAGES, COLLECTION_TEXTS]:
+        for coll in [COLLECTION_IMAGES, COLLECTION_TEXTS, COLLECTION_GEMINI]:
             operation_info = qdrant.delete(
                 collection_name=coll,
                 points_selector=Filter(

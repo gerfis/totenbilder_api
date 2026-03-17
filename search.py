@@ -18,7 +18,12 @@ QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY") 
 COLLECTION_IMAGES = os.getenv("QDRANT_COLLECTION_IMAGES", "totenbilder_v2")
 COLLECTION_TEXTS = os.getenv("QDRANT_COLLECTION_TEXTS", "totenbilder_texte")
+COLLECTION_GEMINI = os.getenv("QDRANT_COLLECTION_GEMINI", "totenbilder_gemini_768")
 PUBLIC_IMAGE_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+import google.genai
+from google.genai import types as genai_types
 
 DB_HOST = os.getenv("DB_HOST")
 DB_USER = os.getenv("DB_USER")
@@ -32,6 +37,32 @@ router = APIRouter()
 _model_text = None
 _model_minilm = None
 _qdrant_client = None
+_gemini_client = None
+
+def get_gemini_client():
+    global _gemini_client
+    if _gemini_client is None:
+        if GEMINI_API_KEY:
+            _gemini_client = google.genai.Client(api_key=GEMINI_API_KEY)
+        else:
+            print("WARNUNG: GEMINI_API_KEY nicht gesetzt!")
+    return _gemini_client
+
+def generate_gemini_embedding(text_content: str):
+    client = get_gemini_client()
+    if not client:
+        return None
+        
+    try:
+        response = client.models.embed_content(
+            model="gemini-embedding-2-preview",
+            contents=[text_content],
+            config=genai_types.EmbedContentConfig(output_dimensionality=768)
+        )
+        return response.embeddings[0].values
+    except Exception as e:
+        print(f"WARNUNG: Gemini Text Embedding fehlgeschlagen: {e}")
+        return None
 
 def get_model():
     global _model_text
@@ -73,6 +104,7 @@ class SearchQuery(BaseModel):
     offset: int = 0
     delta: Optional[str] = "alle"
     type: str = "image" # "image" (CLIP) oder "text" (MiniLM)
+    method: str = "fastembed" # "fastembed" oder "gemini"
 
 class SearchResult(BaseModel):
     filename: str
@@ -102,6 +134,60 @@ async def search_images(search_req: SearchQuery):
          # Größer 0
          filter_conditions.append(FieldCondition(key="delta", range=Range(gt=0)))
 
+    if search_req.method == "gemini":
+        if search_req.similar:
+            ref_points = client.scroll(
+                collection_name=COLLECTION_GEMINI,
+                scroll_filter=Filter(
+                    must=[FieldCondition(key="filename", match=MatchValue(value=search_req.similar))]
+                ),
+                limit=1,
+                with_vectors=True
+            )
+            
+            if ref_points[0]:
+                ref_vector = ref_points[0][0].vector
+                points = client.query_points(
+                    collection_name=COLLECTION_GEMINI,
+                    query=ref_vector,
+                    query_filter=Filter(must=filter_conditions) if filter_conditions else None,
+                    limit=search_req.limit,
+                    offset=search_req.offset
+                ).points
+                
+                for hit in points:
+                    results.append(create_result(hit))
+            else:
+                 raise HTTPException(status_code=404, detail=f"Bild '{search_req.similar}' in Gemini nicht gefunden.")
+
+        elif search_req.query:
+            print(f"Suche nach Text (Gemini): '{search_req.query}'")
+            text_vector = generate_gemini_embedding(search_req.query)
+            if not text_vector:
+                 raise HTTPException(status_code=500, detail="Gemini Embedding fehlgeschlagen.")
+            
+            points = client.query_points(
+                collection_name=COLLECTION_GEMINI,
+                query=text_vector,
+                query_filter=Filter(must=filter_conditions) if filter_conditions else None,
+                limit=search_req.limit * 5,
+                offset=search_req.offset
+            ).points
+            
+            seen_identifiers = set()
+            for hit in points:
+                identifier = hit.payload.get("nid") or hit.payload.get("filename")
+                if identifier and identifier not in seen_identifiers:
+                    seen_identifiers.add(identifier)
+                    results.append(create_result(hit))
+                    if len(results) >= search_req.limit:
+                        break
+        else:
+            return []
+            
+        return results
+
+    # FastEmbed Logic Fallback
     if search_req.similar:
         # 1. Vektor des Referenzbildes holen
         # Anm.: Wir filtern NICHT beim Holen des Referenzbildes, sondern beim Suchen der Ähnlichen.
@@ -189,11 +275,11 @@ async def search_images(search_req: SearchQuery):
     return results
 
 @router.get("/search", response_model=List[SearchResult])
-async def search_images_get(query: str, limit: int = 30, offset: int = 0, delta: str = "alle", type: str = "image"):
+async def search_images_get(query: str, limit: int = 30, offset: int = 0, delta: str = "alle", type: str = "image", method: str = "fastembed"):
     """
     Ermöglicht die Text-Suche per GET-Request.
     """
-    return await search_images(SearchQuery(query=query, limit=limit, offset=offset, delta=delta, type=type))
+    return await search_images(SearchQuery(query=query, limit=limit, offset=offset, delta=delta, type=type, method=method))
 
 def create_result(hit):
     fname_key = hit.payload.get("filename")
