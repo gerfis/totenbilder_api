@@ -384,16 +384,19 @@ async def get_latest(anzahl: int = 10, ort: Optional[str] = None):
             conn.close()
 
 @router.get("/today", response_model=List[LatestResult])
-async def get_today(anzahl: Optional[int] = None, ort: Optional[str] = None):
+async def get_today(anzahl: Optional[int] = None, ort: Optional[str] = None, tag: Optional[int] = None, monat: Optional[int] = None):
     """
-    Gibt Totenbilder aus, deren Sterbetag und -monat dem heutigen Tag entsprechen.
+    Gibt Totenbilder aus, deren Sterbetag und -monat dem heutigen Tag (oder den explizit übergebenen Parametern) entsprechen.
     Wenn anzahl nicht gesetzt ist (Standard), werden alle passenden Bilder ausgegeben.
-    Ist heute der 29. Februar (Schaltjahr), werden nur Bilder mit Sterbetag 29.2. angezeigt.
-    Ansonsten filtert es nach dem aktuellen Tag/Monat.
+    Ist heute der 29. Februar (Schaltjahr) und keine expliziten Parameter wurden gesetzt, werden nur Bilder mit Sterbetag 29.2. angezeigt.
     """
-    now = datetime.now()
-    current_day = now.day
-    current_month = now.month
+    if tag is not None and monat is not None:
+        target_day = tag
+        target_month = monat
+    else:
+        now = datetime.now()
+        target_day = now.day
+        target_month = now.month
 
     conn = get_db_connection()
     if not conn:
@@ -401,7 +404,7 @@ async def get_today(anzahl: Optional[int] = None, ort: Optional[str] = None):
         
     try:
         cursor = conn.cursor(dictionary=True)
-        query_params = [current_day, current_month]
+        query_params = [target_day, target_month]
         
         base_query = """
             SELECT t.nid, t.Name, t.Sterbedatum, t.Sterbetag, t.Sterbemonat, t.Sterbejahr, t.Ort, t.alias, b.filename
