@@ -804,6 +804,138 @@ def process_update_all_gemini():
         
     print(f"Gemini Update abgeschlossen! Erfolgreich: {count_success}, Übersprungen/Fehler: {count_skipped}")
 
+def process_gemini_test_index():
+    """Hintergrund-Task für Test-Indexierung der 100 neuesten Bilder für Gemini"""
+    s3 = get_s3_client()
+    qdrant = get_qdrant_client()
+    
+    if not s3 or not qdrant:
+        print("Fehler: Clients nicht verfügbar")
+        return
+        
+    # Optional: Delete and recreate collection for a clean test? The user implied it should only be done for full index.
+    # But to make sure it exists:
+    if not qdrant.collection_exists(COLLECTION_GEMINI):
+        qdrant.create_collection(
+            collection_name=COLLECTION_GEMINI,
+            vectors_config=VectorParams(size=768, distance=Distance.COSINE),
+        )
+        for coll in [COLLECTION_GEMINI]:
+            qdrant.create_payload_index(collection_name=coll, field_name="filename", field_schema="keyword")
+            qdrant.create_payload_index(collection_name=coll, field_name="nid", field_schema="integer")
+            qdrant.create_payload_index(collection_name=coll, field_name="delta", field_schema="integer")
+
+    print("Fetching metadata for Gemini (latest 100)...")
+    
+    conn = get_db_connection()
+    if not conn:
+        print("Datenbank nicht erreichbar!")
+        return
+
+    latest_images = []
+    try:
+        cursor = conn.cursor(dictionary=True)
+        # Neueste 100 Bilder aus der Datenbank holen
+        query = """
+        SELECT b.filename, b.nid, b.delta, 
+               t.Name, t.Nachname, t.Ledigname, t.Ort, t.Strasse, t.Begraebnisort, 
+               t.Beruf1, t.Beruf2, t.Ehrenaemter, t.Bemerkung, t.Trauerspruch, 
+               t.Bildinhalt, t.Todesgrund
+        FROM totenbilder_bilder b 
+        LEFT JOIN totenbilder t ON b.nid = t.nid
+        ORDER BY b.nid DESC
+        LIMIT 100
+        """
+        cursor.execute(query)
+        results = cursor.fetchall()
+        
+        fields_to_check = ['Name', 'Nachname', 'Ledigname', 'Ort', 'Strasse', 
+                           'Begraebnisort', 'Beruf1', 'Beruf2', 'Ehrenaemter', 
+                           'Bemerkung', 'Trauerspruch', 'Bildinhalt', 'Todesgrund']
+                           
+        for row in results:
+            fields_data = {}
+            for f in fields_to_check:
+                if row.get(f) and str(row.get(f)).strip():
+                    fields_data[f] = str(row[f]).strip()
+            
+            # Reconstruct the S3 prefix key
+            s3_key = R2_PREFIX + row['filename']
+            latest_images.append({
+                "key": s3_key,
+                "nid": row['nid'], 
+                "delta": row['delta'],
+                "fields": fields_data
+            })
+            
+    except Exception as e:
+        print(f"Error fetching metadata: {e}")
+        return
+    finally:
+        if conn and conn.is_connected():
+            cursor.close()
+            conn.close()
+
+    gemini_points_buffer = []
+    count_success = 0
+    count_skipped = 0
+    
+    for item in latest_images:
+        key = item["key"]
+        
+        if not key.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+            continue
+            
+        try:
+            combined_text = ""
+            payload = {
+                "filename": key,
+                "nid": item["nid"],
+                "delta": item["delta"]
+            }
+            
+            if payload["delta"] == 0 and item.get("fields"):
+                combined_text = " ".join(item["fields"].values())
+            
+            # Bild aus R2 laden
+            file_obj = s3.get_object(Bucket=R2_BUCKET_NAME, Key=key)
+            file_content = file_obj['Body'].read()
+            
+            gemini_vector = generate_gemini_embedding(file_content, key, combined_text)
+            if gemini_vector:
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
+                gemini_point = PointStruct(
+                    id=point_id,
+                    vector=gemini_vector,
+                    payload=payload
+                )
+                gemini_points_buffer.append(gemini_point)
+                count_success += 1
+            else:
+                count_skipped += 1
+                
+            if len(gemini_points_buffer) >= 50:
+                qdrant.upsert(collection_name=COLLECTION_GEMINI, points=gemini_points_buffer)
+                print(f"Fortschritt: {count_success} von {len(latest_images)} Gemini Embeddings generiert...")
+                gemini_points_buffer = []
+                
+        except Exception as e:
+            print(f"Fehler bei {key}: {e}")
+            count_skipped += 1
+
+    if gemini_points_buffer:
+        qdrant.upsert(collection_name=COLLECTION_GEMINI, points=gemini_points_buffer)
+        
+    print(f"Gemini Test Update abgeschlossen! Erfolgreich: {count_success}, Übersprungen/Fehler: {count_skipped}")
+
+@router.post("/index-gemini-test", dependencies=[Depends(verify_index_key)])
+async def trigger_index_gemini_test(background_tasks: BackgroundTasks):
+    """
+    Startet die Test-Indexierung der neusten 100 Bilder für Gemini im Hintergrund.
+    """
+    background_tasks.add_task(process_gemini_test_index)
+    return {"message": "Gemini-Test-Indexierung (100 neueste Bilder) wurde im Hintergrund gestartet."}
+
 @router.post("/index-all-gemini", dependencies=[Depends(verify_index_key)])
 async def trigger_index_all_gemini(background_tasks: BackgroundTasks):
     """
