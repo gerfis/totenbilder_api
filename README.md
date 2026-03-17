@@ -6,10 +6,10 @@ Basierend auf **FastAPI**, **Qdrant**, **MySQL** und **FastEmbed**.
 ## Features
 
 - **Semantische Suche**: Findet Bilder anhand von Textbeschreibungen ("Grabstein mit Engel") oder visueller Ähnlichkeit zu anderen Bildern.
-- **High-Performance AI**: Nutzt `FastEmbed` (Quantized CLIP Models) für extrem schnelle und speicherschonende Vektorisierung.
+- **High-Performance AI**: Nutzt `FastEmbed` (Quantized CLIP Models) für extrem schnelle lokale Vektorisierung UND **Gemini 2** für modernste multimodale semantische Einbettungen (Bild+Text).
 - **Hybrid-Datenhaltung**:
-  - **Vektoren (Bilder)**: Qdrant Collection 1 (`totenbilder` für CLIP Image-Embedding).
-  - **Vektoren (Texte)**: Qdrant Collection 2 (`totenbilder_texte` für MiniLM Text-Vektoren, chunked nach Datenbank-Feldern).
+  - **Vektoren (lokal)**: Qdrant Collections `totenbilder_v2` (CLIP Image) und `totenbilder_texte` (MiniLM Text).
+  - **Vektoren (Cloud AI)**: Qdrant Collection `totenbilder_gemini_768` (Kombiniertes Gemini 2 Embedding).
   - **Metadaten**: MySQL (für NID, Delta, Status, Roh-Feldinhalte).
   - **Storage**: Cloudflare R2 (S3-kompatibel).
 - **Asymmetrische Semantische Suche**: Automatisiertes Chunking einzelner Datenbankfelder (Ort, Beruf, Todesgrund etc.) für exaktere Texttreffer in langen Dokumenten.
@@ -36,8 +36,12 @@ INDEX_API_KEY=mein_geheimer_admin_key  # Für Indexing-Endpoints
 # --- Qdrant Vector DB ---
 QDRANT_URL=https://...
 QDRANT_API_KEY=...
-QDRANT_COLLECTION_IMAGES=totenbilder
+QDRANT_COLLECTION_IMAGES=totenbilder_v2
 QDRANT_COLLECTION_TEXTS=totenbilder_texte
+QDRANT_COLLECTION_GEMINI=totenbilder_gemini_768
+
+# --- Gemini API ---
+GEMINI_API_KEY=...
 
 # --- S3 / Cloudflare R2 Storage ---
 R2_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com
@@ -97,13 +101,15 @@ Einfache Textsuche, ideal für Browser-Tests.
 - `limit`: Anzahl (Default: 30)
 - `delta`: Filter (z.B. "0", ">0", "alle")
 - `type`: Such-Modus (`"image"` für visuelle Suche im Bild, `"text"` für OCR-Volltextsuche) (Default: `"image"`)
+- `method`: Die zugrundeliegende Embedding-Technologie (`"fastembed"` oder `"gemini"`) (Default: `"fastembed"`)
 
 **`POST /api/search`**
-Volle Suchfunktionalität inkl. Image-to-Image Suche und expliziter Textsuche.
+Volle Suchfunktionalität inkl. Image-to-Image Suche und expliziter Textsuche via FastEmbed oder Gemini.
 ```json
 {
   "query": "Ein Soldat in Uniform",
   "type": "image",                 // Optional: "image" oder "text"
+  "method": "fastembed",           // Optional: "fastembed" oder "gemini"
   "similar": "referenz_bild.jpg",  // Optional: Ähnlichkeitssuche anstatt Text-Query
   "limit": 50,
   "offset": 0,
@@ -138,9 +144,16 @@ Startet den Indexierungsprozess für den gesamten S3-Bucket im Hintergrund.
 ```
 
 **`POST /api/index-one`**
-Indiziert oder aktualisiert ein spezifisches Bild sofort.
+Indiziert oder aktualisiert ein spezifisches Bild sofort (FastEmbed & Gemini).
 ```json
 { "filename": "1234.jpg" }
+```
+
+**`POST /api/index-all-gemini`**
+Startet die exklusive Neu-Indexierung aller Bilder (Bild+Text Kombination) mittels der **Gemini Embedding 2** API im Hintergrund. Die Collection wird vorher zurückgesetzt.
+*Header:* `X-API-Key: <INDEX_API_KEY>`
+```json
+{}
 ```
 
 **`POST /api/update-text-one`**

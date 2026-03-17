@@ -244,10 +244,14 @@
 
                 <div style="display: flex; gap: 10px;">
                     <button class="btn btn-primary" onclick="triggerIndex('single')">Einzeln Indexieren</button>
-                    <button class="btn btn-secondary" onclick="triggerIndex('all')">Alles Indexieren</button>
-                    <button class="btn btn-secondary" style="background-color: #ef4444;"
-                        onclick="triggerIndex('rebuild')">⚠️ Sammlung neu aufbauen</button>
+                    <button class="btn btn-secondary" style="margin-top: 0;" onclick="triggerIndex('all')">Alles Indexieren</button>
+                    <button class="btn btn-secondary" style="margin-top: 0; background-color: #8b5cf6;" onclick="triggerGeminiIndex('all')">✨ Gemini Alles Indexieren</button>
                 </div>
+                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                    <button class="btn btn-secondary" style="background-color: #ef4444;"
+                    onclick="triggerIndex('rebuild')">⚠️ Sammlung neu aufbauen</button>
+                </div>
+
                 <div id="index-log" class="log-output">Bereit...</div>
             </div>
 
@@ -402,6 +406,32 @@
         }
 
         // --- Text Indexing Logic ---
+        async function triggerGeminiIndex(type) {
+            const logId = 'index-log';
+            const headers = { 'Content-Type': 'application/json', 'x-api-key': 'zawos123' };
+
+            try {
+                if (type === 'all') {
+                    if (!confirm("✨ Wirklich ALLE Bilder exklusiv mit Gemini neu indexieren?\n\nAchtung: Dies setzt die 'totenbilder_gemini_768' Collection zurück und der Vorgang läuft im Hintergrund. Je nach Datenmenge kann das etwas dauern und API-Kosten generieren.")) return;
+                    log(logId, 'Starte Gemini Gesamt-Indexierung...', 'info');
+
+                    const res = await fetch(`${API_BASE}/index-all-gemini`, {
+                        method: 'POST',
+                        headers: headers
+                    });
+                    
+                    const data = await res.json();
+                    if (res.ok) {
+                        log(logId, `Erfolg: ${JSON.stringify(data)}`, 'success');
+                    } else {
+                        log(logId, `Fehler: ${data.detail || 'Unbekannt'}`, 'error');
+                    }
+                }
+            } catch (e) {
+                log(logId, `Netzwerkfehler: ${e.message}`, 'error');
+            }
+        }
+
         async function triggerTextIndex(type) {
             const filename = document.getElementById('text-index-filename').value;
             const logId = 'text-index-log';
