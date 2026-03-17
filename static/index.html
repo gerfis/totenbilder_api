@@ -320,11 +320,15 @@
                     <h2><span class="section-icon">🔍</span> Suche (Preview)</h2>
                 </div>
 
-                <div style="display: flex; gap: 10px;">
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                     <input type="text" id="search-query" placeholder="Suchbegriff eingeben..."
-                        style="margin-bottom: 0;">
+                        style="margin-bottom: 0; min-width: 250px;">
+                    <select id="search-method" style="width: 150px; margin-bottom: 0;">
+                        <option value="fastembed">FastEmbed (Lokal)</option>
+                        <option value="gemini">Gemini 2 (Cloud)</option>
+                    </select>
                     <select id="search-delta" style="width: 150px; margin-bottom: 0;">
-                        <option value="alle">Alle</option>
+                        <option value="alle">Alle Seiten</option>
                         <option value="0">Vorderseite (0)</option>
                         <option value=">0">Rückseite (>0)</option>
                     </select>
@@ -581,6 +585,7 @@
         async function performSearch() {
             const query = document.getElementById('search-query').value;
             const delta = document.getElementById('search-delta').value;
+            const method = document.getElementById('search-method').value;
             const container = document.getElementById('search-results');
 
             if (!query) return;
@@ -593,8 +598,9 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         query: query,
-                        limit: 20,
-                        delta: delta
+                        limit: 30,
+                        delta: delta,
+                        method: method  // Optional property supported in search.py
                     })
                 });
 
@@ -609,8 +615,24 @@
                 results.forEach(item => {
                     const div = document.createElement('div');
                     div.className = 'result-item';
-                    div.title = `File: ${item.filename}\nScore: ${item.score}\nNID: ${item.nid}\nDelta: ${item.delta}`;
+                    
+                    // Detail-Tooltip beim Hover
+                    let tooltip = `File: ${item.filename}\nScore: ${item.score}\nNID: ${item.nid}\nDelta: ${item.delta}`;
+                    if (item.field_type) {
+                        tooltip += `\nTreffer in: ${item.field_type}\nText: ${item.text_content}`;
+                    }
+                    div.title = tooltip;
+                    
+                    // Wenn es ein Text-Treffer war, leichtes Overlay anzeigen
+                    let badge = '';
+                    if (item.field_type && method === 'fastembed') {
+                         badge = `<div style="position:absolute; top:4px; right:4px; background:#3b82f6; font-size:9px; padding:2px 4px; border-radius:4px;">Text</div>`;
+                    } else if (method === 'gemini') {
+                         badge = `<div style="position:absolute; top:4px; right:4px; background:#8b5cf6; font-size:9px; padding:2px 4px; border-radius:4px;">Gemini</div>`;
+                    }
+
                     div.innerHTML = `
+                        ${badge}
                         <img src="${item.image_url}" loading="lazy" alt="${item.filename}">
                         <div class="result-score">${(item.score * 100).toFixed(1)}%</div>
                     `;
