@@ -1,12 +1,12 @@
 import os
 import urllib.parse
+from datetime import datetime
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
 from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
 from deep_translator import GoogleTranslator
 import mysql.connector
@@ -359,6 +359,76 @@ async def get_latest(anzahl: int = 10, ort: Optional[str] = None):
         for row in rows:
             fname_key = row["filename"]
             # Sicherstellen, dass der Prefix vorhanden ist, falls noetig
+            if not fname_key.startswith(r2_prefix):
+                fname_key = f"{r2_prefix}{fname_key}"
+            
+            image_url = f"{base}/{fname_key}"
+            
+            results.append({
+                "nid": row["nid"],
+                "Name": row["Name"] or "",
+                "Sterbedatum": row["Sterbedatum"],
+                "Sterbetag": row["Sterbetag"],
+                "Sterbemonat": row["Sterbemonat"],
+                "Sterbejahr": row["Sterbejahr"],
+                "Ort": row["Ort"],
+                "url": image_url,
+                "alias": row["alias"]
+            })
+            
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@router.get("/today", response_model=List[LatestResult])
+async def get_today(anzahl: Optional[int] = None, ort: Optional[str] = None):
+    """
+    Gibt Totenbilder aus, deren Sterbetag und -monat dem heutigen Tag entsprechen.
+    Wenn anzahl nicht gesetzt ist (Standard), werden alle passenden Bilder ausgegeben.
+    Ist heute der 29. Februar (Schaltjahr), werden nur Bilder mit Sterbetag 29.2. angezeigt.
+    Ansonsten filtert es nach dem aktuellen Tag/Monat.
+    """
+    now = datetime.now()
+    current_day = now.day
+    current_month = now.month
+
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection error")
+        
+    try:
+        cursor = conn.cursor(dictionary=True)
+        query_params = [current_day, current_month]
+        
+        base_query = """
+            SELECT t.nid, t.Name, t.Sterbedatum, t.Sterbetag, t.Sterbemonat, t.Sterbejahr, t.Ort, t.alias, b.filename
+            FROM totenbilder t
+            JOIN totenbilder_bilder b ON t.nid = b.nid
+            WHERE b.delta = 0 AND t.Sterbetag = %s AND t.Sterbemonat = %s
+        """
+        
+        if ort:
+            base_query += " AND t.Ort = %s"
+            query_params.append(ort)
+            
+        base_query += " ORDER BY t.Sterbedatum DESC"
+        
+        if anzahl is not None:
+            base_query += " LIMIT %s"
+            query_params.append(anzahl)
+            
+        cursor.execute(base_query, tuple(query_params))
+        rows = cursor.fetchall()
+        
+        results = []
+        base = PUBLIC_IMAGE_BASE_URL.rstrip("/") if PUBLIC_IMAGE_BASE_URL else ""
+        r2_prefix = os.getenv("R2_PREFIX", "totenbilder/")
+        
+        for row in rows:
+            fname_key = row["filename"]
             if not fname_key.startswith(r2_prefix):
                 fname_key = f"{r2_prefix}{fname_key}"
             

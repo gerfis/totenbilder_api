@@ -93,6 +93,15 @@ Gibt die neuesten Totenbilder (Hauptseiten, `delta=0`) direkt aus der MySQL-Date
 ]
 ```
 
+### 📅 Heutiger Todestag (Today)
+
+**`GET /api/today`**
+Gibt Totenbilder zurück, deren Sterbetag und -monat dem heutigen Datum entsprechen. Bei Schaltjahren am 29. Februar werden spezifisch Bilder mit Todestag 29.2. zurückgeliefert. Sonst wird normal nach heutigem Tag/Monat gefiltert.
+- `anzahl`: Limitiert die Anzahl der Ergebnisse (Optional, Default: Alle passenden Bilder).
+- `ort`: Filtert die Ergebnisse nach einem bestimmten Ort.
+
+*Die Antwort-Struktur ist identisch zu `/api/latest`.*
+
 ### 🔍 Suche (Search)
 
 **`GET /api/search`**
