@@ -14,8 +14,7 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --upgrade pip
-# CPU-Version von Torch installieren, um Speicher zu sparen (Linux Container hat meist keine GPU)
-RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+# CPU-Version von Torch ist nicht mehr nötig, da FastEmbed entfernt wurde
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 4. Restlichen Code kopieren
