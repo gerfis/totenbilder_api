@@ -5,10 +5,8 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
-from deep_translator import GoogleTranslator
 import mysql.connector
 
 load_dotenv()
@@ -34,8 +32,6 @@ DB_NAME = os.getenv("DB_NAME")
 router = APIRouter()
 
 # Globale Variablen (Modul-Level)
-_model_text = None
-_model_minilm = None
 _qdrant_client = None
 _gemini_client = None
 
@@ -67,19 +63,8 @@ def generate_gemini_embedding(text_content: str):
         print(f"WARNUNG: Gemini Text Embedding fehlgeschlagen: {e}")
         return None
 
-def get_model():
-    global _model_text
-    if _model_text is None:
-        print(f"Lade CLIP TEXT Model (fastembed)...")
-        _model_text = TextEmbedding(model_name="Qdrant/clip-ViT-B-32-text")
-    return _model_text
-
-def get_minilm_model():
-    global _model_minilm
-    if _model_minilm is None:
-        print(f"Lade MiniLM TEXT Model (fastembed)...")
-        _model_minilm = TextEmbedding(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
-    return _model_minilm
+# CLIP and MiniLM local models removed to save RAM. 
+# Using Gemini 2 for all embeddings.
 
 def get_qdrant_client():
     global _qdrant_client
@@ -107,7 +92,7 @@ class SearchQuery(BaseModel):
     offset: int = 0
     delta: Optional[str] = "alle"
     type: str = "image" # "image" (CLIP) oder "text" (MiniLM)
-    method: str = "gemini" # "fastembed" oder "gemini"
+    method: str = "gemini" # Default gemini, others ignored.
 
 class SearchResult(BaseModel):
     filename: str
@@ -137,66 +122,13 @@ async def search_images(search_req: SearchQuery):
          # Größer 0
          filter_conditions.append(FieldCondition(key="delta", range=Range(gt=0)))
 
-    if search_req.method == "gemini":
-        if search_req.similar:
-            ref_points = client.scroll(
-                collection_name=COLLECTION_GEMINI,
-                scroll_filter=Filter(
-                    must=[FieldCondition(key="filename", match=MatchValue(value=search_req.similar))]
-                ),
-                limit=1,
-                with_vectors=True
-            )
-            
-            if ref_points[0]:
-                ref_vector = ref_points[0][0].vector
-                points = client.query_points(
-                    collection_name=COLLECTION_GEMINI,
-                    query=ref_vector,
-                    query_filter=Filter(must=filter_conditions) if filter_conditions else None,
-                    limit=search_req.limit,
-                    offset=search_req.offset
-                ).points
-                
-                for hit in points:
-                    results.append(create_result(hit))
-            else:
-                 raise HTTPException(status_code=404, detail=f"Bild '{search_req.similar}' in Gemini nicht gefunden.")
+    # Gemini 2 is the exclusive search method.
+    # The 'method' parameter is kept for compatibility but ignored.
 
-        elif search_req.query:
-            print(f"Suche nach Text (Gemini): '{search_req.query}'")
-            text_vector = generate_gemini_embedding(search_req.query)
-            if not text_vector:
-                 raise HTTPException(status_code=500, detail="Gemini Embedding fehlgeschlagen.")
-            
-            points = client.query_points(
-                collection_name=COLLECTION_GEMINI,
-                query=text_vector,
-                query_filter=Filter(must=filter_conditions) if filter_conditions else None,
-                limit=search_req.limit * 5,
-                offset=search_req.offset
-            ).points
-            
-            seen_identifiers = set()
-            for hit in points:
-                identifier = hit.payload.get("nid") or hit.payload.get("filename")
-                if identifier and identifier not in seen_identifiers:
-                    seen_identifiers.add(identifier)
-                    results.append(create_result(hit))
-                    if len(results) >= search_req.limit:
-                        break
-        else:
-            return []
-            
-        return results
-
-    # FastEmbed Logic Fallback
     if search_req.similar:
-        # 1. Vektor des Referenzbildes holen
-        # Anm.: Wir filtern NICHT beim Holen des Referenzbildes, sondern beim Suchen der Ähnlichen.
-        # Das Referenzbild selbst suchen wir nur per filename.
+        print(f"Suche nach ähnlichen Bildern (Gemini): '{search_req.similar}'")
         ref_points = client.scroll(
-            collection_name=COLLECTION_IMAGES,
+            collection_name=COLLECTION_GEMINI,
             scroll_filter=Filter(
                 must=[FieldCondition(key="filename", match=MatchValue(value=search_req.similar))]
             ),
@@ -206,10 +138,8 @@ async def search_images(search_req: SearchQuery):
         
         if ref_points[0]:
             ref_vector = ref_points[0][0].vector
-            
-            # 2. Ähnliche suchen
             points = client.query_points(
-                collection_name=COLLECTION_IMAGES,
+                collection_name=COLLECTION_GEMINI,
                 query=ref_vector,
                 query_filter=Filter(must=filter_conditions) if filter_conditions else None,
                 limit=search_req.limit,
@@ -219,60 +149,36 @@ async def search_images(search_req: SearchQuery):
             for hit in points:
                 results.append(create_result(hit))
         else:
-             raise HTTPException(status_code=404, detail=f"Bild '{search_req.similar}' nicht gefunden.")
+             raise HTTPException(status_code=404, detail=f"Bild '{search_req.similar}' in Gemini nicht gefunden.")
 
     elif search_req.query:
-        if search_req.type == "text":
-            # REINE TEXT-SUCHE (über MiniLM)
-            print(f"Suche nach Text (MiniLM): '{search_req.query}'")
-            local_model = get_minilm_model()
-            text_vector = list(local_model.embed([search_req.query]))[0].tolist()
-            
-            points = client.query_points(
-                collection_name=COLLECTION_TEXTS,
-                query=text_vector,
-                query_filter=Filter(must=filter_conditions) if filter_conditions else None,
-                limit=search_req.limit * 5, # Hole mehr Treffer für saubere Deduplizierung
-                offset=search_req.offset
-            ).points
-            
-            seen_identifiers = set()
-            for hit in points:
-                # Dedupliziere primär über nid, fallback filename
-                identifier = hit.payload.get("nid") or hit.payload.get("filename")
-                if identifier and identifier not in seen_identifiers:
-                    seen_identifiers.add(identifier)
-                    results.append(create_result(hit))
-                    if len(results) >= search_req.limit:
-                        break
-                
-        else:
-            # TEXT-ZU-BILD SUCHE (über CLIP)
-            # Übersetzung von Deutsch nach Englisch für bessere Suchergebnisse in CLIP
-            try:
-                translated_query = GoogleTranslator(source='auto', target='en').translate(search_req.query)
-                print(f"Suche nach Bildinhalten (CLIP): '{search_req.query}' -> Übersetzung: '{translated_query}'")
-            except Exception as e:
-                print(f"Übersetzungsfehler: {e}")
-                translated_query = search_req.query
-    
-            local_model = get_model()
-            # FastEmbed returns a generator of numpy arrays
-            text_vector = list(local_model.embed([translated_query]))[0].tolist()
-            
-            # Bei CLIP greifen wir auf den unbenannten Vektor zu (default)
-            points = client.query_points(
-                collection_name=COLLECTION_IMAGES,
-                query=text_vector,
-                query_filter=Filter(must=filter_conditions) if filter_conditions else None,
-                limit=search_req.limit,
-                offset=search_req.offset
-            ).points
-            
-            for hit in points:
+        # Gemini handles both descriptive 'image' search and 'text' search natively.
+        # For 'text' search where we want specific matching against OCR'd fields,
+        # we still use the Gemini collection since it contains the combined text.
+        
+        print(f"Suche nach '{search_req.query}' (Gemini)")
+        text_vector = generate_gemini_embedding(search_req.query)
+        if not text_vector:
+             raise HTTPException(status_code=500, detail="Gemini Embedding fehlgeschlagen.")
+        
+        points = client.query_points(
+            collection_name=COLLECTION_GEMINI,
+            query=text_vector,
+            query_filter=Filter(must=filter_conditions) if filter_conditions else None,
+            limit=search_req.limit * 5 if search_req.type == "text" else search_req.limit,
+            offset=search_req.offset
+        ).points
+        
+        seen_identifiers = set()
+        for hit in points:
+            # Deduplicate by nid, fallback to filename
+            identifier = hit.payload.get("nid") or hit.payload.get("filename")
+            if identifier and identifier not in seen_identifiers:
+                seen_identifiers.add(identifier)
                 results.append(create_result(hit))
+                if len(results) >= search_req.limit:
+                    break
     else:
-        # Leere Suche = Fehler oder leere Liste? Hier leere Liste.
         return []
 
     return results

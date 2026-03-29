@@ -5,8 +5,8 @@ import asyncio
 
 # Globale Imports verzögern wir ggf. nicht, da sie eh cached sind, 
 # aber wir nutzen die Router direkt
-from index import router as upload_router, get_model as get_img_model
-from search import router as search_router, get_model as get_text_model
+from index import router as upload_router
+from search import router as search_router
 from auth import router as auth_router, SESSIONS
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request
@@ -14,14 +14,7 @@ from fastapi import Request
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Preload Models in Background to save startup time?
-    # Oder einfach lazy laden lassen bei erstem Request.
-    # Da RAM sparen gewünscht ist, laden wir sie vielleicht besser lazy,
-    # aber um "warm" zu sein, triggern wir es an.
-    
-    get_img_model()
-    get_text_model()
-    print("Models preloaded.")
+    print("Startup: Gemini 2 is the primary embedding engine.")
     yield
     print("Shutdown.")
 

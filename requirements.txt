@@ -1,12 +1,9 @@
 fastapi
 uvicorn[standard]
 qdrant-client
-fastembed
 Pillow
 boto3
 python-dotenv
 mysql-connector-python
-deep-translator
 bcrypt
-sentence-transformers
 google-genai

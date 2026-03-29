@@ -1,12 +1,10 @@
 import os
 import uuid
-import torch
 import boto3
 import tempfile
 from dotenv import load_dotenv
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Header, Depends, status
 from pydantic import BaseModel
-from fastembed import ImageEmbedding, TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, VectorParams, Distance, Filter, FieldCondition, MatchValue, PointVectors
 import mysql.connector
@@ -57,8 +55,6 @@ async def verify_index_key(x_api_key: str = Header(..., description="API Key fü
         )
 
 # Globale Variablen für Modul-Level Caching (Optional, wird hier lazy geladen)
-_model_img = None
-_model_txt = None
 _s3_client = None
 _qdrant_client = None
 _gemini_client = None
@@ -104,19 +100,8 @@ def generate_gemini_embedding(file_content: bytes, filename: str, combined_text:
         print(f"WARNUNG: Gemini Embedding fehlgeschlagen für {filename}: {e}")
         return None
 
-def get_model():
-    global _model_img
-    if _model_img is None:
-        print(f"Lade CLIP IMAGE Model (fastembed)...")
-        _model_img = ImageEmbedding(model_name="Qdrant/clip-ViT-B-32-vision")
-    return _model_img
-
-def get_text_model():
-    global _model_txt
-    if _model_txt is None:
-        print(f"Lade MiniLM TEXT Model (fastembed)...")
-        _model_txt = TextEmbedding(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
-    return _model_txt
+# CLIP and MiniLM local models removed to save RAM. 
+# Using Gemini 2 for all embeddings via Cloud API.
 
 def get_s3_client():
     global _s3_client
@@ -138,19 +123,6 @@ def get_qdrant_client():
     if _qdrant_client is None:
         _qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
         
-        # Init Images Collection
-        if not _qdrant_client.collection_exists(COLLECTION_IMAGES):
-            _qdrant_client.create_collection(
-                collection_name=COLLECTION_IMAGES,
-                vectors_config=VectorParams(size=512, distance=Distance.COSINE),
-            )
-        # Init Texts Collection
-        if not _qdrant_client.collection_exists(COLLECTION_TEXTS):
-            _qdrant_client.create_collection(
-                collection_name=COLLECTION_TEXTS,
-                vectors_config=VectorParams(size=384, distance=Distance.COSINE),
-            )
-            
         # Init Gemini Collection
         if not _qdrant_client.collection_exists(COLLECTION_GEMINI):
             _qdrant_client.create_collection(
@@ -160,12 +132,10 @@ def get_qdrant_client():
             
         # Payload Indices sicherstellen
         try:
-            for coll in [COLLECTION_IMAGES, COLLECTION_TEXTS, COLLECTION_GEMINI]:
+            for coll in [COLLECTION_GEMINI]:
                 _qdrant_client.create_payload_index(collection_name=coll, field_name="filename", field_schema="keyword")
                 _qdrant_client.create_payload_index(collection_name=coll, field_name="nid", field_schema="integer")
                 _qdrant_client.create_payload_index(collection_name=coll, field_name="delta", field_schema="integer")
-            # Text collection needs field_type index too
-            _qdrant_client.create_payload_index(collection_name=COLLECTION_TEXTS, field_name="field_type", field_schema="keyword")
         except:
             pass # Index existiert wohl schon
     return _qdrant_client
@@ -239,10 +209,8 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
     """
     s3 = get_s3_client()
     qdrant = get_qdrant_client()
-    model_img = get_model()
-    model_txt = get_text_model()
 
-    if not s3 or not qdrant or not model_img or not model_txt:
+    if not s3 or not qdrant:
         print("Fehler: Clients konnten nicht initialisiert werden.")
         return
 
@@ -251,30 +219,19 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
 
     # 1. Collections neu erstellen?
     if recreate_collection:
-        print(f"!!! ACHTUNG: Lösche und erstelle Collections neu...")
-        qdrant.recreate_collection(
-            collection_name=COLLECTION_IMAGES,
-            vectors_config=VectorParams(size=512, distance=Distance.COSINE),
-        )
-        qdrant.recreate_collection(
-            collection_name=COLLECTION_TEXTS,
-            vectors_config=VectorParams(size=384, distance=Distance.COSINE),
-        )
+        print(f"!!! ACHTUNG: Lösche und erstelle Gemini Collection neu...")
         qdrant.recreate_collection(
             collection_name=COLLECTION_GEMINI,
             vectors_config=VectorParams(size=768, distance=Distance.COSINE),
         )
         # Payload Index sofort wieder anlegen
-        for coll in [COLLECTION_IMAGES, COLLECTION_TEXTS, COLLECTION_GEMINI]:
+        for coll in [COLLECTION_GEMINI]:
             qdrant.create_payload_index(collection_name=coll, field_name="filename", field_schema="keyword")
             qdrant.create_payload_index(collection_name=coll, field_name="nid", field_schema="integer")
             qdrant.create_payload_index(collection_name=coll, field_name="delta", field_schema="integer")
-        qdrant.create_payload_index(collection_name=COLLECTION_TEXTS, field_name="field_type", field_schema="keyword")
         force_reindex = True # Logischerweise müssen wir dann alles neu machen
 
-    print(f"--- Starte Indexierung. Bucket: {R2_BUCKET_NAME} (Ordner: {R2_PREFIX}) ---")
-    image_points_buffer = []
-    text_points_buffer = []
+    print(f"--- Starte Indexierung (Gemini). Bucket: {R2_BUCKET_NAME} ---")
     gemini_points_buffer = []
     
     paginator = s3.get_paginator('list_objects_v2')
@@ -297,10 +254,10 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
                 continue
 
             try:
-                # Prüfung: Ist das Bild schon indexiert?
+                # Prüfung: Ist das Bild schon indexiert in Gemini?
                 if not force_reindex:
                     res = qdrant.scroll(
-                        collection_name=COLLECTION_IMAGES,
+                        collection_name=COLLECTION_GEMINI,
                         scroll_filter=Filter(
                             must=[FieldCondition(key="filename", match=MatchValue(value=key))]
                         ),
@@ -312,101 +269,48 @@ def process_indexing(force_reindex: bool = False, recreate_collection: bool = Fa
                         count_skipped += 1
                         continue
 
-                print(f"Verarbeite: {key}...")
+                print(f"Verarbeite (Gemini): {key}...")
                 
                 # Bild aus R2 laden
                 file_obj = s3.get_object(Bucket=R2_BUCKET_NAME, Key=key)
                 file_content = file_obj['Body'].read()
                 
-                # FastEmbed benötigt Datei-Pfad (oder Liste davon)
-                file_ext = os.path.splitext(key)[1]
-                vector = []
-                
-                with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp:
-                    tmp.write(file_content)
-                    tmp_path = tmp.name
-                
-                try:
-                    # Embedden Image
-                    img_vector = list(model_img.embed([tmp_path]))[0].tolist()
-                finally:
-                    if os.path.exists(tmp_path):
-                        os.remove(tmp_path)
-                
-                # Deterministic UUID generation
-                img_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
-
                 # Payload zusammenbauen
                 img_payload = {"filename": key}
                 db_filename = key.replace(R2_PREFIX, "")
                 
                 # Calculate combined text for Gemini
                 combined_text = ""
-                # Metadata and Chunking Text Fields
+                # Metadata
                 if db_filename in metadata_map:
                     img_payload["nid"] = metadata_map[db_filename]["nid"]
                     img_payload["delta"] = metadata_map[db_filename]["delta"]
                     
                     if img_payload["delta"] == 0 and metadata_map[db_filename].get("fields"):
                         combined_text = " ".join(metadata_map[db_filename]["fields"].values())
-                        for field_name, field_value in metadata_map[db_filename]["fields"].items():
-                            try:
-                                text_vector = list(model_txt.embed([field_value]))[0].tolist()
-                                # Deterministic ID based on filename AND field_name
-                                text_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{key}_{field_name}"))
-                                text_points_buffer.append(PointStruct(
-                                    id=text_point_id,
-                                    vector=text_vector,
-                                    payload={
-                                        "filename": key,
-                                        "nid": img_payload["nid"],
-                                        "delta": img_payload["delta"],
-                                        "field_type": field_name,
-                                        "text_content": field_value
-                                    }
-                                ))
-                            except Exception as text_e:
-                                print(f"WARNUNG: Text Embedding fehlgeschlagen für {db_filename} ({field_name}): {text_e}")
-                
-                # Create Image Point
-                img_point = PointStruct(
-                    id=img_point_id,
-                    vector=img_vector,
-                    payload=img_payload
-                )
-                image_points_buffer.append(img_point)
                 
                 # Create Gemini Point
                 gemini_vector = generate_gemini_embedding(file_content, key, combined_text)
                 if gemini_vector:
+                    # Deterministic UUID generation
+                    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
                     gemini_point = PointStruct(
-                        id=img_point_id, # Can share the same UUID based on key
+                        id=point_id, 
                         vector=gemini_vector,
                         payload=img_payload
                     )
                     gemini_points_buffer.append(gemini_point)
-                
-                count_processed += 1
+                    count_processed += 1
                 
                 # Batch-Upload
-                if len(image_points_buffer) >= 50:
-                    qdrant.upsert(collection_name=COLLECTION_IMAGES, points=image_points_buffer)
-                    image_points_buffer = []
-                    print(f"Fortschritt: {count_processed} Bilder neu verarbeitet...")
                 if len(gemini_points_buffer) >= 50:
                     qdrant.upsert(collection_name=COLLECTION_GEMINI, points=gemini_points_buffer)
                     gemini_points_buffer = []
-                if len(text_points_buffer) >= 150: # Text buffer can grow faster
-                    qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points_buffer)
-                    text_points_buffer = []
+                    print(f"Fortschritt: {count_processed} Bilder neu verarbeitet...")
                     
             except Exception as e:
                 print(f"Fehler bei {key}: {e}")
 
-    if image_points_buffer:
-        qdrant.upsert(collection_name=COLLECTION_IMAGES, points=image_points_buffer)
-    if text_points_buffer:
-        qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points_buffer)
     if gemini_points_buffer:
         qdrant.upsert(collection_name=COLLECTION_GEMINI, points=gemini_points_buffer)
     
@@ -422,16 +326,13 @@ async def index_single_image(request: SingleIndexRequest):
     """
     key = request.filename
     s3 = get_s3_client()
-    s3 = get_s3_client()
     qdrant = get_qdrant_client()
-    model_img = get_model()
-    model_txt = get_text_model()
 
-    if not s3 or not qdrant or not model_img or not model_txt:
+    if not s3 or not qdrant:
         raise HTTPException(status_code=500, detail="Interne Services nicht verfügbar.")
 
     try:
-        print(f"Indexiere einzelnes Bild: {key}...")
+        print(f"Indexiere einzelnes Bild (Gemini): {key}...")
         
         # Bild aus R2 laden
         # Bild aus R2 laden
@@ -504,17 +405,7 @@ async def index_single_image(request: SingleIndexRequest):
         except Exception as e:
             print(f"Error fetching metadata for single image: {e}")
 
-        img_point = PointStruct(
-            id=point_id,
-            vector=img_vector,
-            payload=payload
-        )
-        
-        # Upsert (direkt, ohne Buffer)
-        qdrant.upsert(collection_name=COLLECTION_IMAGES, points=[img_point])
-        if text_points:
-            qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points)
-            
+        # Gemini Embedding generieren und speichern
         gemini_vector = generate_gemini_embedding(file_content, key, combined_text)
         if gemini_vector:
             gemini_point = PointStruct(
@@ -524,7 +415,7 @@ async def index_single_image(request: SingleIndexRequest):
             )
             qdrant.upsert(collection_name=COLLECTION_GEMINI, points=[gemini_point])
         
-        return {"message": f"Bild '{key}' erfolgreich indexiert.", "filename": key}
+        return {"message": f"Bild '{key}' erfolgreich in Gemini indexiert.", "filename": key}
 
     except HTTPException as he:
         raise he
@@ -545,187 +436,7 @@ async def trigger_indexing(request: IndexRequest, background_tasks: BackgroundTa
     background_tasks.add_task(process_indexing, request.force_reindex, request.recreate_collection)
     return {"message": "Indexierung wurde im Hintergrund gestartet.", "bucket": R2_BUCKET_NAME, "recreate": request.recreate_collection}
 
-class UpdateTextRequest(BaseModel):
-    filename: str
-
-@router.post("/update-text-one", dependencies=[Depends(verify_index_key)])
-async def update_single_text(request: UpdateTextRequest):
-    """
-    Indiziert den Textvektor eines Bildes (nur bei delta=0). Der Hauptvektor bleibt unberührt.
-    """
-    key = request.filename
-    qdrant = get_qdrant_client()
-    model_txt = get_text_model()
-
-    if not qdrant or not model_txt:
-        raise HTTPException(status_code=500, detail="Interne Services nicht verfügbar.")
-
-    try:
-        print(f"Update Textvektoren für: {key}...")
-        
-        # Metadata fetch
-        conn = get_db_connection()
-        if not conn:
-            raise HTTPException(status_code=500, detail="DB Error")
-            
-        cursor = conn.cursor(dictionary=True)
-        db_filename_stripped = key.replace(R2_PREFIX, "")
-        cursor.execute(
-            """
-            SELECT b.nid, b.delta, 
-                   t.Name, t.Nachname, t.Ledigname, t.Ort, t.Strasse, t.Begraebnisort, 
-                   t.Beruf1, t.Beruf2, t.Ehrenaemter, t.Bemerkung, t.Trauerspruch, 
-                   t.Bildinhalt, t.Todesgrund
-            FROM totenbilder_bilder b 
-            LEFT JOIN totenbilder t ON b.nid=t.nid 
-            WHERE b.filename = %s OR b.filename = %s
-            """, 
-            (db_filename_stripped, key)
-        )
-        row = cursor.fetchone()
-        cursor.close()
-        conn.close()
-
-        if not row:
-            raise HTTPException(status_code=404, detail="Eintrag in DB nicht gefunden.")
-            
-        if row['delta'] != 0:
-            return {"message": f"Übersprungen: {key} ist eine Rückseite (delta>0).", "filename": key}
-            
-        # Zuerst alte Textvektoren für dieses Bild löschen
-        qdrant.delete(
-            collection_name=COLLECTION_TEXTS,
-            points_selector=Filter(
-                must=[FieldCondition(key="filename", match=MatchValue(value=key))]
-            ),
-        )
-        
-        nid = row['nid']
-        delta = row['delta']
-        
-        text_points = []
-        fields_to_check = ['Name', 'Nachname', 'Ledigname', 'Ort', 'Strasse', 
-                           'Begraebnisort', 'Beruf1', 'Beruf2', 'Ehrenaemter', 
-                           'Bemerkung', 'Trauerspruch', 'Bildinhalt', 'Todesgrund']
-        
-        for f in fields_to_check:
-            if row.get(f) and str(row.get(f)).strip():
-                field_value = str(row[f]).strip()
-                try:
-                    text_vector = list(model_txt.embed([field_value]))[0].tolist()
-                    text_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{key}_{f}"))
-                    text_points.append(PointStruct(
-                        id=text_point_id,
-                        vector=text_vector,
-                        payload={
-                            "filename": key,
-                            "nid": nid,
-                            "delta": delta,
-                            "field_type": f,
-                            "text_content": field_value
-                        }
-                    ))
-                except Exception as text_e:
-                    print(f"WARNUNG: Text Embedding fehlgeschlagen für {key} ({f}): {text_e}")
-
-        if text_points:
-            qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points)
-        
-        return {"message": f"Textvektoren für '{key}' erfolgreich aktualisiert.", "filename": key}
-
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        print(f"Fehler bei {key}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-def process_update_all_text():
-    qdrant = get_qdrant_client()
-    model_txt = get_text_model()
-    
-    if not qdrant or not model_txt:
-        print("Fehler: Clients nicht verfügbar")
-        return
-        
-    print("Starte Update aller Textvektoren...")
-    
-    metadata_map = fetch_all_metadata()
-    
-    print(f"!!! ACHTUNG: Lösche und erstelle Collection '{COLLECTION_TEXTS}' neu...")
-    qdrant.recreate_collection(
-        collection_name=COLLECTION_TEXTS,
-        vectors_config=VectorParams(size=384, distance=Distance.COSINE),
-    )
-    for coll in [COLLECTION_TEXTS]:
-        qdrant.create_payload_index(collection_name=coll, field_name="filename", field_schema="keyword")
-        qdrant.create_payload_index(collection_name=coll, field_name="nid", field_schema="integer")
-        qdrant.create_payload_index(collection_name=coll, field_name="delta", field_schema="integer")
-        qdrant.create_payload_index(collection_name=coll, field_name="field_type", field_schema="keyword")
-
-    text_points_buffer = []
-    count_success = 0
-    
-    offset = None
-    while True:
-        points, next_offset = qdrant.scroll(
-            collection_name=COLLECTION_IMAGES,
-            with_payload=["filename", "delta", "nid"],
-            with_vectors=False,
-            limit=500,
-            offset=offset
-        )
-        
-        for point in points:
-            filename = point.payload.get("filename")
-            delta = point.payload.get("delta", 0)
-            
-            if not filename or delta != 0:
-                continue
-                
-            db_filename = filename.replace(R2_PREFIX, "")
-            
-            if db_filename in metadata_map and metadata_map[db_filename].get("fields"):
-                for field_name, field_value in metadata_map[db_filename]["fields"].items():
-                    try:
-                        text_vector = list(model_txt.embed([field_value]))[0].tolist()
-                        text_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{filename}_{field_name}"))
-                        text_points_buffer.append(PointStruct(
-                            id=text_point_id,
-                            vector=text_vector,
-                            payload={
-                                "filename": filename,
-                                "nid": point.payload.get("nid"),
-                                "delta": delta,
-                                "field_type": field_name,
-                                "text_content": field_value
-                            }
-                        ))
-                    except Exception as e:
-                        print(f"Fehler bei {filename} ({field_name}): {e}")
-                
-            if len(text_points_buffer) >= 150:
-                qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points_buffer)
-                count_success += len(text_points_buffer)
-                print(f"Fortschritt: {count_success} Text-Chunks generiert...")
-                text_points_buffer = []
-
-        offset = next_offset
-        if offset is None:
-            break
-            
-    if text_points_buffer:
-        qdrant.upsert(collection_name=COLLECTION_TEXTS, points=text_points_buffer)
-        count_success += len(text_points_buffer)
-            
-    print(f"Text Update abgeschlossen! Erfolgreich angelegt: {count_success} Text-Chunks.")
-
-@router.post("/update-text-all", dependencies=[Depends(verify_index_key)])
-async def update_all_text(background_tasks: BackgroundTasks):
-    """
-    Aktualisiert alle Textvektoren für Bilder mit delta=0 im Hintergrund.
-    """
-    background_tasks.add_task(process_update_all_text)
-    return {"message": "Update aller Textvektoren wurde im Hintergrund gestartet."}
+# MiniLM endpoints removed. Use Gemini indexing instead.
 
 def process_update_all_gemini():
     """Hintergrund-Task zum Durchlaufen aller Bilder und Neu-Erstellen der Gemini Embeddings"""

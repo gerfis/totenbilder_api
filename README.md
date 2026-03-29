@@ -6,13 +6,12 @@ Basierend auf **FastAPI**, **Qdrant**, **MySQL** und **FastEmbed**.
 ## Features
 
 - **Semantische Suche**: Findet Bilder anhand von Textbeschreibungen ("Grabstein mit Engel") oder visueller Ähnlichkeit zu anderen Bildern.
-- **High-Performance AI**: Nutzt `FastEmbed` (Quantized CLIP Models) für extrem schnelle lokale Vektorisierung UND **Gemini 2** für modernste multimodale semantische Einbettungen (Bild+Text).
-- **Hybrid-Datenhaltung**:
-  - **Vektoren (lokal)**: Qdrant Collections `totenbilder_v2` (CLIP Image) und `totenbilder_texte` (MiniLM Text).
+- **High-Performance AI**: Nutzt **Gemini 2** für modernste multimodale semantische Einbettungen (Bild+Text).
+- **Datenhaltung**:
   - **Vektoren (Cloud AI)**: Qdrant Collection `totenbilder_gemini_768` (Kombiniertes Gemini 2 Embedding).
   - **Metadaten**: MySQL (für NID, Delta, Status, Roh-Feldinhalte).
   - **Storage**: Cloudflare R2 (S3-kompatibel).
-- **Asymmetrische Semantische Suche**: Automatisiertes Chunking einzelner Datenbankfelder (Ort, Beruf, Todesgrund etc.) für exaktere Texttreffer in langen Dokumenten.
+- **Asymmetrische Semantische Suche**: Automatisiertes Chunking einzelner Datenbankfelder (Ort, Beruf, Todesgrund etc.) innerhalb des Gemini-Embeddings für exaktere Treffer.
 - **Auto-Sync**: Background-Tasks zur Synchronisation von MySQL-Metadaten in den Vektor-Index.
 - **Integrierte Security**: Session-basiertes Login-System und API-Key Schutz für Admin-Tasks.
 - **Frontend**: Integriertes statisches Dashboard für Suche und Verwaltung.
@@ -104,6 +103,15 @@ Gibt Totenbilder zurück, deren Sterbetag und -monat dem heutigen Datum (oder de
 
 *Die Antwort-Struktur ist identisch zu `/api/latest`.*
 
+### 💻 Client-Nutzung (Frontend Integration)
+
+Die Endpunkte `/api/latest` und `/api/today` liefern ein JSON-Array zurück, das direkt in Frontends verwendet werden kann. 
+
+**Beispiel für die Anzeige in einer Web-App:**
+- Das Bild wird direkt über die URL im Feld `url` eingebunden: `<img src="{item.url}" alt="{item.Name}" />`
+- Der Link zur Detailseite der Person wird aus dem Alias generiert: `<a href="https://neue.totenbilder.at/totenbild/{item.alias}">Zum Eintrag</a>`
+
+
 ### 🔍 Suche (Search)
 
 **`GET /api/search`**
@@ -111,8 +119,8 @@ Einfache Textsuche, ideal für Browser-Tests.
 - `query`: Suchbegriff
 - `limit`: Anzahl (Default: 30)
 - `delta`: Filter (z.B. "0", ">0", "alle")
-- `type`: Such-Modus (`"image"` für visuelle Suche im Bild, `"text"` für OCR-Volltextsuche) (Default: `"image"`)
-- `method`: Die zugrundeliegende Embedding-Technologie (`"gemini"` oder `"fastembed"`) (Default: `"gemini"`)
+- `type`: Such-Modus (`"image"` oder `"text"`) (Default: `"image"`)
+- `method`: Aktuell wird ausschließlich `"gemini"` unterstützt.
 
 **`POST /api/search`**
 Volle Suchfunktionalität inkl. Image-to-Image Suche und expliziter Textsuche via Gemini oder FastEmbed.
@@ -120,7 +128,7 @@ Volle Suchfunktionalität inkl. Image-to-Image Suche und expliziter Textsuche vi
 {
   "query": "Ein Soldat in Uniform",
   "type": "image",                 // Optional: "image" oder "text"
-  "method": "gemini",              // Optional: "gemini" oder "fastembed"
+  "method": "gemini",              // Standard: "gemini"
   "similar": "referenz_bild.jpg",  // Optional: Ähnlichkeitssuche anstatt Text-Query
   "limit": 50,
   "offset": 0,
@@ -155,7 +163,7 @@ Startet den Indexierungsprozess für den gesamten S3-Bucket im Hintergrund.
 ```
 
 **`POST /api/index-one`**
-Indiziert oder aktualisiert ein spezifisches Bild sofort (FastEmbed & Gemini).
+Indiziert oder aktualisiert ein spezifisches Bild sofort (Gemini 2).
 ```json
 { "filename": "1234.jpg" }
 ```
@@ -167,15 +175,8 @@ Startet die exklusive Neu-Indexierung aller Bilder (Bild+Text Kombination) mitte
 {}
 ```
 
-**`POST /api/update-text-one`**
-Indiziert den Textvektor eines Bildes neu (nur bei `delta=0`). Der Bild-Hauptvektor bleibt unberührt.
-*Header:* `X-API-Key: <INDEX_API_KEY>`
-```json
-{ "filename": "1234.jpg" }
-```
-
-**`POST /api/update-text-all`**
-Aktualisiert alle Textvektoren für Bilder mit `delta=0` im Hintergrund. Verwirft alte Textvektoren, holt die Kategorien (`Beruf`, `Todesgrund`, `Ort`, etc.) aus der MySQL-Datenbank und speichert jeden Feld-Wert als separaten Chunk in der `totenbilder_texte` Qdrant-Collection.
+**`POST /api/index-all-gemini`**
+Startet die exklusive Neu-Indexierung aller Bilder (Bild+Text Kombination) mittels der **Gemini Embedding 2** API im Hintergrund. Die Collection wird vorher zurückgesetzt.
 *Header:* `X-API-Key: <INDEX_API_KEY>`
 ```json
 {}

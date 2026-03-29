@@ -16,8 +16,7 @@ DB_NAME = os.getenv("DB_NAME")
 
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY") 
-COLLECTION_IMAGES = os.getenv("QDRANT_COLLECTION_IMAGES", "totenbilder_v2")
-COLLECTION_TEXTS = os.getenv("QDRANT_COLLECTION_TEXTS", "totenbilder_texte")
+COLLECTION_GEMINI = os.getenv("QDRANT_COLLECTION_GEMINI", "totenbilder_gemini_768")
 R2_PREFIX = os.getenv("R2_PREFIX", "totenbilder/")
 
 router = APIRouter()
@@ -57,9 +56,9 @@ def update_qdrant_point(qdrant_client, filename, nid, delta):
     full_key = f"{R2_PREFIX}{filename}"
     
     try:
-        # 1. Update Image Collection
-        img_points, _ = qdrant_client.scroll(
-            collection_name=COLLECTION_IMAGES,
+        # Update Gemini Collection
+        points, _ = qdrant_client.scroll(
+            collection_name=COLLECTION_GEMINI,
             scroll_filter=Filter(
                 must=[FieldCondition(key="filename", match=MatchValue(value=full_key))]
             ),
@@ -68,36 +67,15 @@ def update_qdrant_point(qdrant_client, filename, nid, delta):
             with_vectors=False
         )
         
-        if img_points:
+        if points:
             qdrant_client.set_payload(
-                collection_name=COLLECTION_IMAGES,
-                points=[img_points[0].id],
+                collection_name=COLLECTION_GEMINI,
+                points=[points[0].id],
                 payload={"nid": nid, "delta": delta}
             )
+            return True, "Success"
             
-        # 2. Update Texts Collection
-        text_points, _ = qdrant_client.scroll(
-            collection_name=COLLECTION_TEXTS,
-            scroll_filter=Filter(
-                must=[FieldCondition(key="filename", match=MatchValue(value=full_key))]
-            ),
-            limit=100, # Ein Bild kann mehrere Chunk-Vektoren haben
-            with_payload=False,
-            with_vectors=False
-        )
-        
-        if text_points:
-            text_ids = [p.id for p in text_points]
-            qdrant_client.set_payload(
-                collection_name=COLLECTION_TEXTS,
-                points=text_ids,
-                payload={"nid": nid, "delta": delta}
-            )
-            
-        if not img_points and not text_points:
-            return False, f"Vector not found for key '{full_key}'"
-            
-        return True, "Success"
+        return False, f"Vector not found in Gemini for key '{full_key}'"
         
     except Exception as e:
         return False, str(e)
@@ -242,14 +220,14 @@ def check_missing_in_qdrant():
             
         print(f"MySQL enthält {len(mysql_filenames)} Bilder (Keys).")
 
-        # 2. Alle Dateinamen aus Qdrant holen
-        print("Lade Dateinamen aus Qdrant (Scroll)...")
+        # 2. Alle Dateinamen aus Qdrant (Gemini) holen
+        print("Lade Dateinamen aus Qdrant (Gemini Scroll)...")
         qdrant_filenames = set()
         
         offset = None
         while True:
             points, next_offset = qdrant.scroll(
-                collection_name=COLLECTION_IMAGES,
+                collection_name=COLLECTION_GEMINI,
                 with_payload=["filename"],
                 with_vectors=False,
                 limit=1000,
