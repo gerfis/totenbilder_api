@@ -339,24 +339,9 @@ async def index_single_image(request: SingleIndexRequest):
         try:
             file_obj = s3.get_object(Bucket=R2_BUCKET_NAME, Key=key)
             file_content = file_obj['Body'].read()
-            
-            file_ext = os.path.splitext(key)[1]
-            vector = []
-            
-            with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp:
-                tmp.write(file_content)
-                tmp_path = tmp.name
-            
-            try:
-                # Embedden Image
-                img_vector = list(model_img.embed([tmp_path]))[0].tolist()
-            finally:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-                    
         except Exception as e:
-            print(f"Fehler beim Laden/Embedden von {key}: {e}")
-            raise HTTPException(status_code=404, detail=f"Bild '{key}' konnte nicht verarbeitet werden: {e}")
+            print(f"Fehler beim Laden von {key}: {e}")
+            raise HTTPException(status_code=404, detail=f"Bild '{key}' konnte nicht geladen werden: {e}")
         
         # Deterministic UUID
         point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
