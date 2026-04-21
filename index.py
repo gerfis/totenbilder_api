@@ -169,7 +169,7 @@ def fetch_all_metadata():
         # JOIN table "totenbilder" to get individual fields
         query = """
         SELECT b.filename, b.nid, b.delta, 
-               t.Name, t.Nachname, t.Ledigname, t.Ort, t.Strasse, t.Begraebnisort, 
+               t.Name, t.Nachname, t.Ledigname, t.Wohnort, t.Strasse, t.Begraebnisort, 
                t.Beruf1, t.Beruf2, t.Ehrenaemter, t.Bemerkung, t.Trauerspruch, 
                t.Bildinhalt, t.Todesgrund
         FROM totenbilder_bilder b 
@@ -178,7 +178,7 @@ def fetch_all_metadata():
         cursor.execute(query)
         results = cursor.fetchall()
         
-        fields_to_check = ['Name', 'Nachname', 'Ledigname', 'Ort', 'Strasse', 
+        fields_to_check = ['Name', 'Nachname', 'Ledigname', 'Wohnort', 'Strasse', 
                            'Begraebnisort', 'Beruf1', 'Beruf2', 'Ehrenaemter', 
                            'Bemerkung', 'Trauerspruch', 'Bildinhalt', 'Todesgrund']
                            
@@ -359,7 +359,7 @@ async def index_single_image(request: SingleIndexRequest):
                 cursor.execute(
                     """
                     SELECT b.nid, b.delta, 
-                           t.Name, t.Nachname, t.Ledigname, t.Ort, t.Strasse, t.Begraebnisort, 
+                           t.Name, t.Nachname, t.Ledigname, t.Wohnort, t.Strasse, t.Begraebnisort, 
                            t.Beruf1, t.Beruf2, t.Ehrenaemter, t.Bemerkung, t.Trauerspruch, 
                            t.Bildinhalt, t.Todesgrund
                     FROM totenbilder_bilder b 
@@ -374,7 +374,7 @@ async def index_single_image(request: SingleIndexRequest):
                     payload["delta"] = row['delta']
                     
                     if payload["delta"] == 0:
-                        fields_to_check = ['Name', 'Nachname', 'Ledigname', 'Ort', 'Strasse', 
+                        fields_to_check = ['Name', 'Nachname', 'Ledigname', 'Wohnort', 'Strasse', 
                                          'Begraebnisort', 'Beruf1', 'Beruf2', 'Ehrenaemter', 
                                          'Bemerkung', 'Trauerspruch', 'Bildinhalt', 'Todesgrund']
                         texts = []
@@ -537,7 +537,7 @@ def process_gemini_test_index():
         # Neueste 100 Bilder aus der Datenbank holen
         query = """
         SELECT b.filename, b.nid, b.delta, 
-               t.Name, t.Nachname, t.Ledigname, t.Ort, t.Strasse, t.Begraebnisort, 
+               t.Name, t.Nachname, t.Ledigname, t.Wohnort, t.Strasse, t.Begraebnisort, 
                t.Beruf1, t.Beruf2, t.Ehrenaemter, t.Bemerkung, t.Trauerspruch, 
                t.Bildinhalt, t.Todesgrund
         FROM totenbilder_bilder b 
@@ -548,7 +548,7 @@ def process_gemini_test_index():
         cursor.execute(query)
         results = cursor.fetchall()
         
-        fields_to_check = ['Name', 'Nachname', 'Ledigname', 'Ort', 'Strasse', 
+        fields_to_check = ['Name', 'Nachname', 'Ledigname', 'Wohnort', 'Strasse', 
                            'Begraebnisort', 'Beruf1', 'Beruf2', 'Ehrenaemter', 
                            'Bemerkung', 'Trauerspruch', 'Bildinhalt', 'Todesgrund']
                            

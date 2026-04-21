@@ -1,7 +1,7 @@
 # ToTenBilder API
 
 Modernes API-Backend für die semantische Suche in historischen Sterbebildern (Totenbildern).
-Basierend auf **FastAPI**, **Qdrant**, **MySQL** und **FastEmbed**.
+Basierend auf **FastAPI**, **Qdrant**, **MySQL** und der **Gemini API**.
 
 ## Features
 
@@ -11,7 +11,7 @@ Basierend auf **FastAPI**, **Qdrant**, **MySQL** und **FastEmbed**.
   - **Vektoren (Cloud AI)**: Qdrant Collection `totenbilder_gemini_768` (Kombiniertes Gemini 2 Embedding).
   - **Metadaten**: MySQL (für NID, Delta, Status, Roh-Feldinhalte).
   - **Storage**: Cloudflare R2 (S3-kompatibel).
-- **Asymmetrische Semantische Suche**: Automatisiertes Chunking einzelner Datenbankfelder (Ort, Beruf, Todesgrund etc.) innerhalb des Gemini-Embeddings für exaktere Treffer.
+- **Asymmetrische Semantische Suche**: Automatisiertes Chunking einzelner Datenbankfelder (Wohnort, Beruf, Todesgrund etc.) innerhalb des Gemini-Embeddings für exaktere Treffer.
 - **Auto-Sync**: Background-Tasks zur Synchronisation von MySQL-Metadaten in den Vektor-Index.
 - **Integrierte Security**: Session-basiertes Login-System und API-Key Schutz für Admin-Tasks.
 - **Frontend**: Integriertes statisches Dashboard für Suche und Verwaltung.
@@ -73,7 +73,7 @@ Der Server läuft standardmäßig auf `http://0.0.0.0:8000`.
 **`GET /api/latest`**
 Gibt die neuesten Totenbilder (Hauptseiten, `delta=0`) direkt aus der MySQL-Datenbank als JSON zurück, absteigend sortiert nach `nid`.
 - `anzahl`: Limitiert die Anzahl der Ergebnisse (Default: 10).
-- `ort`: Filtert die Ergebnisse nach einem bestimmten Ort. Ohne Angabe werden Bilder aus allen Orten zurückgegeben.
+- `wohnort`: Filtert die Ergebnisse nach einem bestimmten Wohnort. Ohne Angabe werden Bilder aus allen Wohnorten zurückgegeben.
 
 **Antwort-Struktur:**
 ```json
@@ -85,7 +85,7 @@ Gibt die neuesten Totenbilder (Hauptseiten, `delta=0`) direkt aus der MySQL-Date
     "Sterbetag": 1,
     "Sterbemonat": 1,
     "Sterbejahr": 2023,
-    "Ort": "Ortsname",
+    "Wohnort": "Ortsname",
     "alias": "name-der-person",
     "url": "https://<R2_PUBLIC_BASE_URL>/totenbilder/bild.jpg"
   }
@@ -97,7 +97,7 @@ Gibt die neuesten Totenbilder (Hauptseiten, `delta=0`) direkt aus der MySQL-Date
 **`GET /api/today`**
 Gibt Totenbilder zurück, deren Sterbetag und -monat dem heutigen Datum (oder den explizit übergebenen Parametern) entsprechen. Bei Schaltjahren am 29. Februar werden spezifisch Bilder mit Todestag 29.2. zurückgeliefert. Sonst wird normal nach heutigem Tag/Monat gefiltert.
 - `anzahl`: Limitiert die Anzahl der Ergebnisse (Optional, Default: Alle passenden Bilder).
-- `ort`: Filtert die Ergebnisse nach einem bestimmten Ort.
+- `wohnort`: Filtert die Ergebnisse nach einem bestimmten Wohnort.
 - `tag`: Optionaler Tag (1-31) zur Überschreibung des heutigen Datums (muss zusammen mit `monat` verwendet werden).
 - `monat`: Optionaler Monat (1-12) zur Überschreibung des heutigen Datums (muss zusammen mit `tag` verwendet werden).
 
@@ -123,7 +123,7 @@ Einfache Textsuche, ideal für Browser-Tests.
 - `method`: Aktuell wird ausschließlich `"gemini"` unterstützt.
 
 **`POST /api/search`**
-Volle Suchfunktionalität inkl. Image-to-Image Suche und expliziter Textsuche via Gemini oder FastEmbed.
+Volle Suchfunktionalität inkl. Image-to-Image Suche und expliziter Textsuche via Gemini.
 ```json
 {
   "query": "Ein Soldat in Uniform",
@@ -175,12 +175,7 @@ Startet die exklusive Neu-Indexierung aller Bilder (Bild+Text Kombination) mitte
 {}
 ```
 
-**`POST /api/index-all-gemini`**
-Startet die exklusive Neu-Indexierung aller Bilder (Bild+Text Kombination) mittels der **Gemini Embedding 2** API im Hintergrund. Die Collection wird vorher zurückgesetzt.
-*Header:* `X-API-Key: <INDEX_API_KEY>`
-```json
-{}
-```
+
 
 ### 🗑️ Löschen (Delete)
 
@@ -233,6 +228,6 @@ Löscht die Session.
 
 - `main.py`: Einstiegspunkt, Router-Konfiguration.
 - `auth.py`: Login-Logik, MySQL-User-Check.
-- `index.py`: Logik zum Indexieren von Bildern (S3 -> FastEmbed -> Qdrant).
-- `search.py`: Suchlogik (Text/Bild -> FastEmbed -> Qdrant Search).
+- `index.py`: Logik zum Indexieren von Bildern (S3 -> Gemini API -> Qdrant).
+- `search.py`: Suchlogik (Text/Bild -> Gemini API -> Qdrant Search).
 - `payload.py`: Synchronisation und Wartungstools.

@@ -219,15 +219,16 @@ class LatestResult(BaseModel):
     Sterbetag: Optional[int] = None
     Sterbemonat: Optional[int] = None
     Sterbejahr: Optional[int] = None
+    Wohnort: Optional[str] = None
     Ort: Optional[str] = None
     url: str
     alias: Optional[str] = None
 
 @router.get("/latest", response_model=List[LatestResult])
-async def get_latest(anzahl: int = 10, ort: Optional[str] = None):
+async def get_latest(anzahl: int = 10, wohnort: Optional[str] = None, ort: Optional[str] = None):
     """
     Gibt die letzten <anzahl> Totenbilder als JSON aus, nach nid absteigend sortiert.
-    Optional kann nach Ort gefiltert werden.
+    Optional kann nach Wohnort (oder Ort) gefiltert werden.
     """
     conn = get_db_connection()
     if not conn:
@@ -235,19 +236,20 @@ async def get_latest(anzahl: int = 10, ort: Optional[str] = None):
         
     try:
         cursor = conn.cursor(dictionary=True)
-        if ort:
+        search_ort = wohnort or ort
+        if search_ort:
             query = """
-                SELECT t.nid, t.Name, t.Sterbedatum, t.Sterbetag, t.Sterbemonat, t.Sterbejahr, t.Ort, t.alias, b.filename
+                SELECT t.nid, t.Name, t.Sterbedatum, t.Sterbetag, t.Sterbemonat, t.Sterbejahr, t.Wohnort, t.alias, b.filename
                 FROM totenbilder t
                 JOIN totenbilder_bilder b ON t.nid = b.nid
-                WHERE b.delta = 0 AND t.Ort = %s
+                WHERE b.delta = 0 AND t.Wohnort = %s
                 ORDER BY t.Sterbedatum DESC
                 LIMIT %s
             """
-            cursor.execute(query, (ort, anzahl))
+            cursor.execute(query, (search_ort, anzahl))
         else:
             query = """
-                SELECT t.nid, t.Name, t.Sterbedatum, t.Sterbetag, t.Sterbemonat, t.Sterbejahr, t.Ort, t.alias, b.filename
+                SELECT t.nid, t.Name, t.Sterbedatum, t.Sterbetag, t.Sterbemonat, t.Sterbejahr, t.Wohnort, t.alias, b.filename
                 FROM totenbilder t
                 JOIN totenbilder_bilder b ON t.nid = b.nid
                 WHERE b.delta = 0
@@ -277,7 +279,8 @@ async def get_latest(anzahl: int = 10, ort: Optional[str] = None):
                 "Sterbetag": row["Sterbetag"],
                 "Sterbemonat": row["Sterbemonat"],
                 "Sterbejahr": row["Sterbejahr"],
-                "Ort": row["Ort"],
+                "Wohnort": row["Wohnort"],
+                "Ort": row["Wohnort"],
                 "url": image_url,
                 "alias": row["alias"]
             })
@@ -290,7 +293,7 @@ async def get_latest(anzahl: int = 10, ort: Optional[str] = None):
             conn.close()
 
 @router.get("/today", response_model=List[LatestResult])
-async def get_today(anzahl: Optional[int] = None, ort: Optional[str] = None, tag: Optional[int] = None, monat: Optional[int] = None):
+async def get_today(anzahl: Optional[int] = None, wohnort: Optional[str] = None, ort: Optional[str] = None, tag: Optional[int] = None, monat: Optional[int] = None):
     """
     Gibt Totenbilder aus, deren Sterbetag und -monat dem heutigen Tag (oder den explizit übergebenen Parametern) entsprechen.
     Wenn anzahl nicht gesetzt ist (Standard), werden alle passenden Bilder ausgegeben.
@@ -313,15 +316,16 @@ async def get_today(anzahl: Optional[int] = None, ort: Optional[str] = None, tag
         query_params = [target_day, target_month]
         
         base_query = """
-            SELECT t.nid, t.Name, t.Sterbedatum, t.Sterbetag, t.Sterbemonat, t.Sterbejahr, t.Ort, t.alias, b.filename
+            SELECT t.nid, t.Name, t.Sterbedatum, t.Sterbetag, t.Sterbemonat, t.Sterbejahr, t.Wohnort, t.alias, b.filename
             FROM totenbilder t
             JOIN totenbilder_bilder b ON t.nid = b.nid
             WHERE b.delta = 0 AND t.Sterbetag = %s AND t.Sterbemonat = %s
         """
         
-        if ort:
-            base_query += " AND t.Ort = %s"
-            query_params.append(ort)
+        search_ort = wohnort or ort
+        if search_ort:
+            base_query += " AND t.Wohnort = %s"
+            query_params.append(search_ort)
             
         base_query += " ORDER BY t.Sterbedatum DESC"
         
@@ -350,7 +354,8 @@ async def get_today(anzahl: Optional[int] = None, ort: Optional[str] = None, tag
                 "Sterbetag": row["Sterbetag"],
                 "Sterbemonat": row["Sterbemonat"],
                 "Sterbejahr": row["Sterbejahr"],
-                "Ort": row["Ort"],
+                "Wohnort": row["Wohnort"],
+                "Ort": row["Wohnort"],
                 "url": image_url,
                 "alias": row["alias"]
             })
