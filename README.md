@@ -16,6 +16,7 @@ Basierend auf **FastAPI**, **Qdrant**, **MySQL** und der **Gemini API**.
 - **Integrierte Security**: Session-basiertes Login-System und API-Key Schutz für Admin-Tasks.
 - **Frontend**: Integriertes statisches Dashboard für Suche und Verwaltung.
 
+
 ## Voraussetzungen
 
 ### Installation
